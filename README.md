@@ -255,6 +255,12 @@ curl http://localhost:6533/health
 - Ingestion: 50 documents per batch
 - Adjust based on memory constraints
 
+## Documentation
+
+- [Implementation Plan](docs/IMPLEMENTATION_PLAN.md) - Detailed design and architecture
+- [Implementation Status](docs/IMPLEMENTATION_STATUS.md) - Current progress and remaining tasks
+- [Normalized Schema](docs/normalized_test.schema.json) - Canonical test document format
+
 ## License
 
 MIT License - see LICENSE file
