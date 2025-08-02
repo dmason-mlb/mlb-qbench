@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "mlb-qbench": {
+      "command": "python",
+      "args": ["-m", "src.mcp"],
+      "env": {
+        "API_BASE_URL": "http://localhost:8000"
+      }
+    }
+  }
+}

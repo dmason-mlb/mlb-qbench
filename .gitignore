@@ -168,7 +168,14 @@ playground/
 
 # Embedding model cache
 .embeddings_cache/
-models/
+# Downloaded ML models (not source code)
+/models/
+*.onnx
+*.pt
+*.pth
+*.h5
+*.pb
+*.tflite
 
 # Test artifacts
 test-results/

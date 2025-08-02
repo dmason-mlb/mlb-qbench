@@ -165,6 +165,18 @@ See `docs/normalized_test.schema.json` for complete schema.
 4. Rerank by combined scores
 5. Return top-k results with matched steps
 
+### MCP Integration
+
+MLB QBench includes an MCP (Model Context Protocol) server that allows AI assistants to interact with the service:
+
+```bash
+# Run the MCP server
+python -m src.mcp
+
+# Or configure in Claude Desktop
+# See docs/MCP_USAGE.md for details
+```
+
 ## Development
 
 ### Running Tests
@@ -260,6 +272,7 @@ curl http://localhost:6533/health
 - [Implementation Plan](docs/IMPLEMENTATION_PLAN.md) - Detailed design and architecture
 - [Implementation Status](docs/IMPLEMENTATION_STATUS.md) - Current progress and remaining tasks
 - [Normalized Schema](docs/normalized_test.schema.json) - Canonical test document format
+- [MCP Usage](docs/MCP_USAGE.md) - Model Context Protocol integration guide
 
 ## License
 

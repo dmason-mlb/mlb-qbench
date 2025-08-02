@@ -7,14 +7,9 @@ from qdrant_client.models import (
     Distance,
     VectorParams,
     PointStruct,
-    OptimizersConfig,
-    HnswConfig,
     PayloadSchemaType,
-    PayloadIndexParams,
     TextIndexParams,
     TokenizerType,
-    IntegerIndexParams,
-    KeywordIndexParams,
 )
 import structlog
 
@@ -26,26 +21,6 @@ TEST_STEPS_COLLECTION = "test_steps"
 
 # Vector dimensions (OpenAI text-embedding-3-large)
 VECTOR_DIM = 3072  # Can be adjusted based on embedding model
-
-# HNSW parameters optimized for ~25% of corpus initially
-HNSW_CONFIG = HnswConfig(
-    m=32,  # Number of connections per node
-    ef_construct=128,  # Size of dynamic candidate list
-    full_scan_threshold=10000,  # Use HNSW for collections > 10k points
-    max_indexing_threads=0,  # Use all available cores
-    on_disk=False,  # Keep in memory for performance
-)
-
-# Optimizer config
-OPTIMIZER_CONFIG = OptimizersConfig(
-    deleted_threshold=0.2,  # Vacuum when 20% deleted
-    vacuum_min_vector_number=1000,  # Don't vacuum small collections
-    default_segment_number=2,  # Start with 2 segments
-    max_segment_size=200000,  # 200k vectors per segment
-    memmap_threshold=100000,  # Use mmap for segments > 100k
-    indexing_threshold=20000,  # Start indexing at 20k vectors
-    flush_interval_sec=5,  # Flush to disk every 5 seconds
-)
 
 
 def get_client() -> QdrantClient:
@@ -82,9 +57,6 @@ def create_collections(client: Optional[QdrantClient] = None, recreate: bool = F
                 size=VECTOR_DIM,
                 distance=Distance.COSINE,
             ),
-            hnsw_config=HNSW_CONFIG,
-            optimizers_config=OPTIMIZER_CONFIG,
-            on_disk_payload=False,  # Keep payload in memory
         )
         
         # Create payload indexes for filtering
@@ -103,9 +75,6 @@ def create_collections(client: Optional[QdrantClient] = None, recreate: bool = F
                 size=VECTOR_DIM,
                 distance=Distance.COSINE,
             ),
-            hnsw_config=HNSW_CONFIG,
-            optimizers_config=OPTIMIZER_CONFIG,
-            on_disk_payload=False,
         )
         
         # Create payload indexes
@@ -122,10 +91,7 @@ def create_test_docs_indexes(client: QdrantClient) -> None:
         client.create_payload_index(
             collection_name=TEST_DOCS_COLLECTION,
             field_name=field,
-            field_schema=KeywordIndexParams(
-                type=PayloadSchemaType.KEYWORD,
-                is_tenant=False,
-            )
+            field_schema=PayloadSchemaType.KEYWORD,
         )
     
     # Array indexes for filtering
@@ -134,10 +100,7 @@ def create_test_docs_indexes(client: QdrantClient) -> None:
         client.create_payload_index(
             collection_name=TEST_DOCS_COLLECTION,
             field_name=field,
-            field_schema=KeywordIndexParams(
-                type=PayloadSchemaType.KEYWORD,
-                is_tenant=False,
-            )
+            field_schema=PayloadSchemaType.KEYWORD,
         )
     
     # Keyword indexes for exact matching
@@ -146,10 +109,7 @@ def create_test_docs_indexes(client: QdrantClient) -> None:
         client.create_payload_index(
             collection_name=TEST_DOCS_COLLECTION,
             field_name=field,
-            field_schema=KeywordIndexParams(
-                type=PayloadSchemaType.KEYWORD,
-                is_tenant=False,
-            )
+            field_schema=PayloadSchemaType.KEYWORD,
         )
     
     # Full text search on title and description
@@ -174,21 +134,14 @@ def create_test_steps_indexes(client: QdrantClient) -> None:
     client.create_payload_index(
         collection_name=TEST_STEPS_COLLECTION,
         field_name="parent_uid",
-        field_schema=KeywordIndexParams(
-            type=PayloadSchemaType.KEYWORD,
-            is_tenant=False,
-        )
+        field_schema=PayloadSchemaType.KEYWORD,
     )
     
     # Index for step number
     client.create_payload_index(
         collection_name=TEST_STEPS_COLLECTION,
         field_name="step_index",
-        field_schema=IntegerIndexParams(
-            type=PayloadSchemaType.INTEGER,
-            lookup=True,
-            range=True,
-        )
+        field_schema=PayloadSchemaType.INTEGER,
     )
     
     # Full text search on action

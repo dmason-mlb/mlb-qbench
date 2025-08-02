@@ -16,7 +16,7 @@ dev: ## Start Qdrant and API server for development
 	@echo "Waiting for Qdrant to be ready..."
 	@sleep 5
 	@echo "Starting API server..."
-	cd src/service && uvicorn main:app --reload --host 0.0.0.0 --port 8000
+	uvicorn src.service.main:app --reload --host 0.0.0.0 --port 8000
 
 stop: ## Stop all services
 	docker-compose down
@@ -58,8 +58,12 @@ qdrant-down: ## Stop only Qdrant
 	docker-compose stop qdrant
 
 api-dev: ## Start only API server (assumes Qdrant is running)
-	cd src/service && uvicorn main:app --reload --host 0.0.0.0 --port 8000
+	uvicorn src.service.main:app --reload --host 0.0.0.0 --port 8000
 
 check-env: ## Verify environment variables
 	@python -c "from dotenv import load_dotenv; load_dotenv(); import os; print('EMBED_PROVIDER:', os.getenv('EMBED_PROVIDER', 'NOT SET'))"
 	@python -c "from dotenv import load_dotenv; load_dotenv(); import os; print('QDRANT_URL:', os.getenv('QDRANT_URL', 'NOT SET'))"
+
+mcp-server: ## Run MCP server for AI integration
+	@echo "Starting MCP server..."
+	API_BASE_URL=$${API_BASE_URL:-http://localhost:8000} python -m src.mcp

@@ -1,6 +1,6 @@
 # MLB QBench Implementation Status
 
-## Current Status: 90% Complete
+## Current Status: 95% Complete
 
 Last Updated: 2024-01-15
 
@@ -57,10 +57,20 @@ Last Updated: 2024-01-15
 - ✅ Normalized schema documentation
 - ✅ Implementation plan
 - ✅ Environment setup guide
+- ✅ MCP integration guide
+
+### MCP Integration
+- ✅ MCP server implementation
+- ✅ Search tools for AI assistants
+- ✅ Lookup tools (by JIRA, similar)
+- ✅ Ingestion tool
+- ✅ Health check tool
+- ✅ Configuration for Claude Desktop
+- ✅ Usage documentation
 
 ## Remaining Tasks 🚧
 
-### Testing (10% remaining)
+### Testing (5% remaining)
 - ⏳ Unit tests for models
 - ⏳ Unit tests for normalization
 - ⏳ Integration tests for ingestion
@@ -101,6 +111,15 @@ curl -X POST http://localhost:8000/search \
 curl http://localhost:8000/by-jira/FRAMED-1390
 ```
 
+### Run MCP Server
+```bash
+# Start MCP server for AI integration
+make mcp-server
+
+# Or run directly
+API_BASE_URL=http://localhost:8000 python -m src.mcp
+```
+
 ## Known Issues
 
 1. **Schema Modifications**: The original schema.py needed updates to work with current Qdrant client
@@ -126,9 +145,11 @@ curl http://localhost:8000/by-jira/FRAMED-1390
    - Create performance benchmarks
 
 3. **Long Term**:
-   - MCP wrapper for AI integration
+   - ✅ MCP wrapper for AI integration (COMPLETED)
    - Query expansion features
    - Advanced reranking models
+   - Multi-language support
+   - Real-time ingestion webhooks
 
 ## Dependencies
 
