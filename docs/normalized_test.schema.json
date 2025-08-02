@@ -1,0 +1,213 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Normalized Test Document",
+  "description": "Canonical schema for unified test representation across functional and API test sources",
+  "type": "object",
+  "required": ["uid", "title", "source", "ingested_at"],
+  "properties": {
+    "uid": {
+      "type": "string",
+      "description": "Unique identifier (jiraKey or testCaseId)",
+      "examples": ["FRAMED-1390", "API-004"]
+    },
+    "jiraKey": {
+      "type": ["string", "null"],
+      "description": "JIRA issue key",
+      "pattern": "^[A-Z]+-[0-9]+$",
+      "examples": ["FRAMED-1390", "FRAMED-643"]
+    },
+    "testCaseId": {
+      "type": ["string", "null"],
+      "description": "Test case ID (used when jiraKey is null)",
+      "examples": ["API-004", "FUNC-123"]
+    },
+    "title": {
+      "type": "string",
+      "description": "Test title",
+      "examples": ["English Language", "Team Page Localization"]
+    },
+    "summary": {
+      "type": ["string", "null"],
+      "description": "Brief test summary",
+      "examples": ["Verify English language display", "Check Spanish localization"]
+    },
+    "description": {
+      "type": ["string", "null"],
+      "description": "Detailed test description",
+      "examples": ["Free text long description of test purpose and scope"]
+    },
+    "testType": {
+      "type": "string",
+      "enum": ["Manual", "API", "Performance", "Integration", "Unit"],
+      "default": "Manual",
+      "description": "Type of test"
+    },
+    "priority": {
+      "type": "string",
+      "enum": ["Critical", "High", "Medium", "Low"],
+      "default": "Medium",
+      "description": "Test priority level"
+    },
+    "platforms": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "Target platforms",
+      "examples": [["iOS", "Android"], ["Web"]]
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "Test tags/labels (unified from both sources)",
+      "examples": [["team_page", "api", "localization"], ["live_state", "requires_live_game"]]
+    },
+    "folderStructure": {
+      "type": ["string", "null"],
+      "description": "Folder path in test repository",
+      "examples": ["Test Repository/Team Page/API Tests", "Functional/MLB App/Game State"]
+    },
+    "preconditions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "Test preconditions",
+      "examples": [["English language supported", "Valid team ID available"]]
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["index", "action"],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Step number (1-based)"
+          },
+          "action": {
+            "type": "string",
+            "description": "Action to perform"
+          },
+          "expected": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "description": "Expected results for this step"
+          }
+        }
+      },
+      "default": [],
+      "description": "Test execution steps"
+    },
+    "expectedResults": {
+      "type": ["string", "null"],
+      "description": "Overall expected results (if not per-step)",
+      "examples": ["All text displayed in English", "Localization matches selected language"]
+    },
+    "testData": {
+      "type": ["string", "null"],
+      "description": "Test data requirements",
+      "examples": ["teamId=147, lang=en", "gameId=12345, state=live"]
+    },
+    "relatedIssues": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Z]+-[0-9]+$"
+      },
+      "default": [],
+      "description": "Related JIRA issues",
+      "examples": [["FRAMED-643", "FRAMED-1234"]]
+    },
+    "testPath": {
+      "type": ["string", "null"],
+      "description": "File path in codebase",
+      "examples": ["MLB-App/.../test_team_page.py:179", "tests/api/localization_test.js:45"]
+    },
+    "source": {
+      "type": "string",
+      "enum": ["functional_tests_xray.json", "api_tests_xray.json"],
+      "description": "Source file for this test"
+    },
+    "ingested_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 timestamp of ingestion"
+    }
+  },
+  "examples": [
+    {
+      "uid": "FRAMED-1390",
+      "jiraKey": "FRAMED-1390",
+      "testCaseId": "API-004",
+      "title": "English Language - Team Page API",
+      "summary": "Verify English language response from team page API",
+      "description": "Test that team page API returns all content in English when language parameter is set to 'en'",
+      "testType": "API",
+      "priority": "High",
+      "platforms": ["iOS", "Android"],
+      "tags": ["team_page", "api", "localization", "english"],
+      "folderStructure": "Test Repository/Team Page/API Tests",
+      "preconditions": ["English language supported", "Valid team ID"],
+      "steps": [
+        {
+          "index": 1,
+          "action": "Send GET request to /api/team/{teamId}?lang=en",
+          "expected": ["Status code 200", "Response in English"]
+        },
+        {
+          "index": 2,
+          "action": "Verify all text fields are in English",
+          "expected": ["All text in English", "Date formats: MM/DD"]
+        }
+      ],
+      "expectedResults": null,
+      "testData": "teamId=147, lang=en",
+      "relatedIssues": ["FRAMED-643"],
+      "testPath": "MLB-App/tests/api/test_team_page.py:179",
+      "source": "api_tests_xray.json",
+      "ingested_at": "2024-01-15T10:30:00Z"
+    },
+    {
+      "uid": "FUNC-001",
+      "jiraKey": null,
+      "testCaseId": "FUNC-001",
+      "title": "Live Game State Validation",
+      "summary": "Verify live game state updates",
+      "description": "Test that live game state is correctly displayed and updated",
+      "testType": "Manual",
+      "priority": "Critical",
+      "platforms": ["iOS", "Android", "Web"],
+      "tags": ["live_state", "requires_live_game", "mig", "game_state"],
+      "folderStructure": "Functional/MLB App/Game State",
+      "preconditions": ["Live game in progress"],
+      "steps": [
+        {
+          "index": 1,
+          "action": "Navigate to live game",
+          "expected": ["Game loads", "Live indicator shown"]
+        },
+        {
+          "index": 2,
+          "action": "Verify MIG data updates",
+          "expected": ["Score updates", "Play-by-play refreshes"]
+        }
+      ],
+      "expectedResults": "Live game data updates in real-time",
+      "testData": null,
+      "relatedIssues": [],
+      "testPath": null,
+      "source": "functional_tests_xray.json",
+      "ingested_at": "2024-01-15T10:35:00Z"
+    }
+  ]
+}
