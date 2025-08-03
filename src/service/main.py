@@ -6,7 +6,7 @@ from pathlib import Path
 from datetime import datetime
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Query, Depends, Request
+from fastapi import FastAPI, HTTPException, Query, Depends, Request, Security
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import structlog
@@ -22,6 +22,7 @@ from ..embedder import get_embedder, prepare_text_for_embedding
 from ..ingest.ingest_functional import ingest_functional_tests
 from ..ingest.ingest_api import ingest_api_tests
 from ..auth import require_api_key
+from ..auth.auth import get_api_key
 
 # Load environment variables
 load_dotenv()
@@ -311,10 +312,18 @@ async def root():
 
 
 @app.get("/healthz")
-async def health():
-    """Health check endpoint."""
+async def health(api_key: str = Security(get_api_key)):
+    """Health check endpoint - requires API key authentication."""
     try:
         health_status = check_collections_health(qdrant_client)
+        
+        # Log health check access for security audit
+        logger.info(
+            "Health check accessed",
+            api_key_prefix=api_key[:8] + "..." if len(api_key) > 8 else "***",
+            health_status=health_status["status"]
+        )
+        
         return {
             "status": "healthy" if health_status["status"] == "healthy" else "degraded",
             "timestamp": datetime.utcnow().isoformat(),
