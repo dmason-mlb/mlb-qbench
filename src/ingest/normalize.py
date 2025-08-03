@@ -13,73 +13,124 @@ def normalize_functional_test(raw_data: Dict[str, Any]) -> Optional[TestDoc]:
     """
     Normalize functional test data to standard format.
     
-    Functional JSON structure:
+    Functional JSON structure (Xray format):
     {
-        "testId": "string",
-        "jiraKey": "string",
         "testInfo": {
             "summary": "string",
-            "description": "string",
-            "labels": ["string"],
+            "type": "Manual",
             "priority": "string",
-            "testType": "string",
-            "steps": [...],
-            "folder": "string"
-        }
+            "labels": ["string"]
+        },
+        "issueKey": "string",
+        "folder": "string",
+        "precondition": "string",
+        "objective": "string",
+        "steps": [
+            {
+                "index": 1,
+                "action": "string",
+                "data": "string",
+                "result": "string"
+            }
+        ]
     }
     """
     try:
+        # Handle nested structure - functional tests have data wrapped in 'rows'
+        if 'rows' in raw_data and isinstance(raw_data['rows'], list):
+            # This is the outer structure, not a single test
+            logger.warning("Received outer structure instead of single test", data_keys=list(raw_data.keys()))
+            return None
+            
+        # Map issueKey to jiraKey for compatibility
+        if 'issueKey' in raw_data and 'jiraKey' not in raw_data:
+            raw_data['jiraKey'] = raw_data['issueKey']
+        if 'testCaseId' in raw_data and 'testId' not in raw_data:
+            raw_data['testId'] = raw_data['testCaseId']
+            
+        # Extract test info - handle both old and Xray formats
         test_info = raw_data.get("testInfo", {})
         
+        # For Xray format, steps are at the root level
+        raw_steps = raw_data.get("steps", test_info.get("steps", []))
+        
+        # Handle testScript structure (functional tests have testScript instead of testInfo)
+        if not test_info and 'testScript' in raw_data:
+            # Map fields from the flattened structure
+            test_info = {
+                'summary': raw_data.get('summary', ''),
+                'description': raw_data.get('description', ''),
+                'labels': raw_data.get('labels', []),
+                'priority': raw_data.get('priority', 'Medium'),
+                'testType': raw_data.get('testType', 'Manual'),
+                'steps': raw_data.get('testScript', {}).get('steps', []),
+                'folder': raw_data.get('folder', '')
+            }
+            raw_steps = test_info.get('steps', [])
+        
         # Determine UID
-        uid = raw_data.get("jiraKey") or raw_data.get("testId")
+        uid = raw_data.get("jiraKey") or raw_data.get("issueKey") or raw_data.get("testId")
         if not uid:
-            logger.warning("No jiraKey or testId found", data=raw_data)
+            logger.warning("No jiraKey, issueKey or testId found", data=raw_data)
             return None
         
         # Extract and normalize steps
-        raw_steps = test_info.get("steps", [])
         steps = []
-        for idx, step in enumerate(raw_steps, 1):
-            # Handle different step formats
+        for step in raw_steps:
             if isinstance(step, dict):
+                # Handle Xray format steps
+                index = step.get("index", len(steps) + 1)
                 action = step.get("action", step.get("description", ""))
-                expected = step.get("expected", step.get("expectedResult", []))
+                data = step.get("data", "")
+                if data and action:
+                    action = f"{action} (Data: {data})"
+                
+                # Functional tests have 'result' field instead of 'expected'
+                expected = step.get("expected", step.get("expectedResult", step.get("result", [])))
                 if isinstance(expected, str):
                     expected = [expected] if expected else []
                 elif not isinstance(expected, list):
                     expected = []
             else:
                 # If step is just a string
+                index = len(steps) + 1
                 action = str(step)
                 expected = []
             
             if action:  # Only add non-empty steps
                 steps.append(TestStep(
-                    index=idx,
+                    index=index,
                     action=action,
                     expected=expected
                 ))
         
+        # Get description - use objective for Xray format
+        description = test_info.get("description") or raw_data.get("objective", "")
+        
+        # Get preconditions - convert string to list if needed
+        preconditions = raw_data.get("preconditions", raw_data.get("precondition", []))
+        if isinstance(preconditions, str):
+            preconditions = [preconditions] if preconditions else []
+        
         # Create normalized test document
         test_doc = TestDoc(
             uid=uid,
-            jiraKey=raw_data.get("jiraKey"),
+            jiraKey=raw_data.get("jiraKey") or raw_data.get("issueKey"),
             testCaseId=raw_data.get("testId"),
-            title=test_info.get("summary", "Untitled Test"),
-            summary=test_info.get("summary"),
-            description=test_info.get("description"),
-            testType=test_info.get("testType", "Manual"),
-            priority=normalize_priority(test_info.get("priority", "Medium")),
-            platforms=[],  # Functional tests don't specify platforms
-            tags=test_info.get("labels", []),  # labels → tags
-            folderStructure=test_info.get("folder"),  # folder → folderStructure
-            preconditions=test_info.get("preconditions", []),
+            title=test_info.get("summary", raw_data.get("summary", "Untitled Test")),
+            summary=test_info.get("summary", raw_data.get("summary")),
+            description=description,
+            testType=test_info.get("type", test_info.get("testType", "Manual")),
+            priority=normalize_priority(test_info.get("priority", raw_data.get("priority", "Medium"))),
+            platforms=raw_data.get("platforms", []),  # Use platforms from raw_data if available
+            tags=test_info.get("labels", raw_data.get("labels", [])),  # labels → tags
+            folderStructure=raw_data.get("folder", test_info.get("folder")),  # folder → folderStructure
+            preconditions=preconditions,
             steps=steps,
-            expectedResults=test_info.get("expectedResults"),
-            testData=test_info.get("testData"),
-            relatedIssues=[],  # Not in functional format
-            testPath=None,  # Not in functional format
+            expectedResults=test_info.get("expectedResults") or raw_data.get("expectedResults"),
+            testData=test_info.get("testData") or raw_data.get("testData"),
+            relatedIssues=raw_data.get("relatedIssues", []),  # Check raw_data too
+            testPath=raw_data.get("testPath"),  # Check raw_data too
             source="functional_tests_xray.json",
             ingested_at=datetime.utcnow()
         )
@@ -95,15 +146,20 @@ def normalize_api_test(raw_data: Dict[str, Any]) -> Optional[TestDoc]:
     """
     Normalize API test data to standard format.
     
-    API JSON structure:
+    API JSON structure (Xray format):
     {
         "title": "string",
         "priority": "string",
         "platforms": ["string"],
-        "folderStructure": "string",
+        "folderStructure": "string" or ["string"],
         "tags": ["string"],
         "preconditions": ["string"],
-        "testSteps": [...],
+        "testSteps": [
+            {
+                "action": "string",
+                "expectedResult": "string"  # Note: Xray uses expectedResult, not expected
+            }
+        ],
         "testData": "string",
         "relatedIssues": ["string"],
         "jiraKey": "string" or null,
@@ -125,12 +181,13 @@ def normalize_api_test(raw_data: Dict[str, Any]) -> Optional[TestDoc]:
             logger.warning("No jiraKey or testCaseId found", data=raw_data)
             return None
         
-        # Extract and normalize steps
-        raw_steps = raw_data.get("testSteps", [])
+        # Extract and normalize steps - check both 'testSteps' and 'steps'
+        raw_steps = raw_data.get("testSteps", raw_data.get("steps", []))
         steps = []
         for idx, step in enumerate(raw_steps, 1):
             if isinstance(step, dict):
                 action = step.get("action", step.get("description", ""))
+                # Handle Xray format which uses 'expectedResult' instead of 'expected'
                 expected = step.get("expected", step.get("expectedResult", []))
                 if isinstance(expected, str):
                     expected = [expected] if expected else []
@@ -147,20 +204,35 @@ def normalize_api_test(raw_data: Dict[str, Any]) -> Optional[TestDoc]:
                     expected=expected
                 ))
         
+        # Normalize testType - convert lowercase to uppercase
+        test_type = raw_data.get("testType", "API")
+        if isinstance(test_type, str) and test_type.lower() == "api":
+            test_type = "API"
+            
+        # Normalize folderStructure - convert list to path string
+        folder_structure = raw_data.get("folderStructure")
+        if isinstance(folder_structure, list):
+            folder_structure = "/".join(folder_structure)
+        
+        # Normalize preconditions - convert string to list if needed
+        preconditions = raw_data.get("preconditions", [])
+        if isinstance(preconditions, str):
+            preconditions = [preconditions] if preconditions else []
+        
         # Create normalized test document
         test_doc = TestDoc(
             uid=uid,
             jiraKey=jira_key,  # Can be None
             testCaseId=test_case_id,
             title=raw_data.get("title", "Untitled Test"),
-            summary=raw_data.get("title"),  # Use title as summary
+            summary=raw_data.get("summary", raw_data.get("title")),  # Use summary or title as fallback
             description=raw_data.get("description"),
-            testType=raw_data.get("testType", "API"),  # Default to API
+            testType=test_type,  # Use normalized testType
             priority=normalize_priority(raw_data.get("priority", "Medium")),
             platforms=raw_data.get("platforms", []),
             tags=raw_data.get("tags", []),
-            folderStructure=raw_data.get("folderStructure"),
-            preconditions=raw_data.get("preconditions", []),
+            folderStructure=folder_structure,  # Use normalized folderStructure
+            preconditions=preconditions,  # Use normalized preconditions
             steps=steps,
             expectedResults=raw_data.get("expectedResults"),
             testData=raw_data.get("testData"),

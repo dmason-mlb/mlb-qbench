@@ -16,8 +16,9 @@ import httpx
 # Configure logging
 logger = structlog.get_logger()
 
-# Get API base URL from environment
+# Get API configuration from environment
 API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
+API_KEY = os.environ.get("API_KEY")
 
 # Create the MCP server
 server = Server("mlb-qbench")
@@ -159,7 +160,12 @@ async def handle_call_tool(
 ) -> Sequence[types.TextContent | types.ImageContent | types.EmbeddedResource]:
     """Handle tool execution."""
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        # Prepare headers with API key if configured
+        headers = {"Content-Type": "application/json"}
+        if API_KEY:
+            headers["X-API-Key"] = API_KEY
+        
+        async with httpx.AsyncClient(timeout=30.0, headers=headers) as client:
             if name == "search_tests":
                 # Execute search
                 response = await client.post(

@@ -6,18 +6,22 @@ from pathlib import Path
 from datetime import datetime
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import structlog
 from dotenv import load_dotenv
 from qdrant_client.models import Filter, FieldCondition, MatchValue, MatchAny
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from ..models.schema import get_client, TEST_DOCS_COLLECTION, TEST_STEPS_COLLECTION, check_collections_health
 from ..models.test_models import SearchRequest, SearchResult, IngestRequest, IngestResponse, TestDoc
 from ..embedder import get_embedder, prepare_text_for_embedding
 from ..ingest.ingest_functional import ingest_functional_tests
 from ..ingest.ingest_api import ingest_api_tests
+from ..auth import require_api_key
 
 # Load environment variables
 load_dotenv()
@@ -28,6 +32,9 @@ logger = structlog.get_logger()
 # Initialize clients
 qdrant_client = None
 embedder = None
+
+# Initialize rate limiter
+limiter = Limiter(key_func=get_remote_address)
 
 
 @asynccontextmanager
@@ -57,13 +64,19 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Add CORS middleware
+# Add rate limit error handler
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Add CORS middleware with secure configuration
+allowed_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "X-API-Key"],
+    max_age=3600,
 )
 
 
@@ -275,7 +288,8 @@ async def health():
 
 
 @app.post("/search", response_model=List[SearchResult])
-async def search(request: SearchRequest):
+@limiter.limit("60/minute")
+async def search(request: Request, search_request: SearchRequest, api_key: str = require_api_key):
     """
     Search for tests using semantic search.
     
@@ -284,21 +298,21 @@ async def search(request: SearchRequest):
     """
     try:
         # Search documents
-        if request.scope in ["all", "docs"]:
+        if search_request.scope in ["all", "docs"]:
             doc_results = await search_documents(
-                request.query,
-                request.top_k,
-                request.filters
+                search_request.query,
+                search_request.top_k,
+                search_request.filters
             )
         else:
             doc_results = []
         
         # Search steps
-        if request.scope in ["all", "steps"]:
+        if search_request.scope in ["all", "steps"]:
             steps_by_parent = await search_steps(
-                request.query,
-                request.top_k,
-                request.filters
+                search_request.query,
+                search_request.top_k,
+                search_request.filters
             )
         else:
             steps_by_parent = {}
@@ -307,14 +321,14 @@ async def search(request: SearchRequest):
         results = await merge_and_rerank_results(
             doc_results,
             steps_by_parent,
-            request.top_k
+            search_request.top_k
         )
         
         logger.info(
             "Search completed",
-            query=request.query,
+            query=search_request.query,
             results_count=len(results),
-            scope=request.scope
+            scope=search_request.scope
         )
         
         return results
@@ -325,7 +339,8 @@ async def search(request: SearchRequest):
 
 
 @app.post("/ingest", response_model=IngestResponse)
-async def ingest(request: IngestRequest):
+@limiter.limit("5/minute")
+async def ingest(request: Request, ingest_request: IngestRequest, api_key: str = require_api_key):
     """
     Ingest test data from JSON files.
     
@@ -335,21 +350,35 @@ async def ingest(request: IngestRequest):
         response = IngestResponse()
         
         # Ingest functional tests if path provided
-        if request.functional_path:
-            if not Path(request.functional_path).exists():
-                raise HTTPException(status_code=404, detail=f"Functional file not found: {request.functional_path}")
+        if ingest_request.functional_path:
+            # Validate path to prevent directory traversal
+            functional_path = Path(ingest_request.functional_path).resolve()
+            data_dir = Path("data").resolve()
             
-            result = ingest_functional_tests(request.functional_path)
+            if not str(functional_path).startswith(str(data_dir)):
+                raise HTTPException(status_code=400, detail="Invalid file path: must be within data directory")
+            
+            if not functional_path.exists():
+                raise HTTPException(status_code=404, detail=f"Functional file not found: {ingest_request.functional_path}")
+            
+            result = ingest_functional_tests(str(functional_path))
             response.functional_ingested = result.get("ingested", 0)
             response.errors.extend(result.get("errors", []))
             response.warnings.extend(result.get("warnings", []))
         
         # Ingest API tests if path provided
-        if request.api_path:
-            if not Path(request.api_path).exists():
-                raise HTTPException(status_code=404, detail=f"API file not found: {request.api_path}")
+        if ingest_request.api_path:
+            # Validate path to prevent directory traversal
+            api_path = Path(ingest_request.api_path).resolve()
+            data_dir = Path("data").resolve()
             
-            result = ingest_api_tests(request.api_path)
+            if not str(api_path).startswith(str(data_dir)):
+                raise HTTPException(status_code=400, detail="Invalid file path: must be within data directory")
+            
+            if not api_path.exists():
+                raise HTTPException(status_code=404, detail=f"API file not found: {ingest_request.api_path}")
+            
+            result = ingest_api_tests(str(api_path))
             response.api_ingested = result.get("ingested", 0)
             response.errors.extend(result.get("errors", []))
             response.warnings.extend(result.get("warnings", []))
@@ -371,7 +400,7 @@ async def ingest(request: IngestRequest):
 
 
 @app.get("/by-jira/{jira_key}", response_model=TestDoc)
-async def get_by_jira(jira_key: str):
+async def get_by_jira(jira_key: str, api_key: str = require_api_key):
     """Get a test by its JIRA key."""
     try:
         # Query by jiraKey
@@ -404,12 +433,30 @@ async def get_by_jira(jira_key: str):
 async def find_similar(
     jira_key: str,
     scope: Literal["docs", "steps", "all"] = Query("docs", description="Search scope"),
-    top_k: int = Query(10, ge=1, le=100, description="Number of results")
+    top_k: int = Query(10, ge=1, le=100, description="Number of results"),
+    api_key: str = require_api_key
 ):
     """Find tests similar to a given test."""
     try:
-        # First get the test
-        test = await get_by_jira(jira_key)
+        # First get the test (call internal logic directly to avoid auth dependency)
+        # Query by jiraKey
+        filter_cond = Filter(
+            must=[FieldCondition(key="jiraKey", match=MatchValue(value=jira_key))]
+        )
+        
+        results = qdrant_client.scroll(
+            collection_name=TEST_DOCS_COLLECTION,
+            scroll_filter=filter_cond,
+            limit=1,
+            with_payload=True,
+            with_vectors=False
+        )
+        
+        if not results[0]:
+            raise HTTPException(status_code=404, detail=f"Test not found: {jira_key}")
+        
+        test_data = results[0][0].payload
+        test = TestDoc(**test_data)
         
         # Create a search query from the test
         query_parts = []

@@ -26,11 +26,10 @@ VECTOR_DIM = 3072  # Can be adjusted based on embedding model
 def get_client() -> QdrantClient:
     """Get Qdrant client instance."""
     url = os.getenv("QDRANT_URL", "http://localhost:6533")
-    api_key = os.getenv("QDRANT_API_KEY")
+    # Not using Qdrant Cloud - no API key needed for local instance
     
     return QdrantClient(
         url=url,
-        api_key=api_key,
         timeout=int(os.getenv("QDRANT_TIMEOUT", "30"))
     )
 

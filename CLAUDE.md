@@ -96,7 +96,7 @@ Required environment variables:
 ```bash
 # Qdrant Configuration
 QDRANT_URL=http://localhost:6533    # Custom port to avoid conflicts
-QDRANT_API_KEY=                     # Optional for local setup
+# NOTE: Not using Qdrant Cloud - no API key needed for local Docker instance
 
 # Embedding Provider
 EMBED_PROVIDER=openai               # Options: openai, cohere, vertex, azure

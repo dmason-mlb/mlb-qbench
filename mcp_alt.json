@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "mlb-qbench": {
+      "command": "python3",
+      "args": ["/Users/douglas.mason/Documents/GitHub/mlb-qbench/src/mcp/__main__.py"],
+      "cwd": "/Users/douglas.mason/Documents/GitHub/mlb-qbench",
+      "env": {
+        "API_BASE_URL": "http://localhost:8000",
+        "PYTHONPATH": "/Users/douglas.mason/Documents/GitHub/mlb-qbench",
+        "API_KEY": "your-api-key-here"
+      }
+    }
+  }
+}

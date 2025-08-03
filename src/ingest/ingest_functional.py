@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import List, Dict, Any
 import structlog
 from dotenv import load_dotenv
-from qdrant_client.models import PointStruct
+from qdrant_client.models import PointStruct, Filter, FieldCondition, MatchValue
 import uuid
 
 from ..models.schema import get_client, TEST_DOCS_COLLECTION, TEST_STEPS_COLLECTION
@@ -28,8 +28,14 @@ def load_functional_tests(file_path: str) -> List[Dict[str, Any]]:
         if isinstance(data, list):
             return data
         elif isinstance(data, dict):
+            # Check for Xray format with info and tests structure
+            if 'info' in data and 'tests' in data:
+                logger.info(f"Found Xray format with {len(data['tests'])} tests")
+                return data['tests']
             # Check for common wrapper keys
-            if 'tests' in data:
+            elif 'rows' in data:
+                return data['rows']
+            elif 'tests' in data:
                 return data['tests']
             elif 'data' in data:
                 return data['data']
@@ -120,7 +126,10 @@ def ingest_functional_tests(
         return {
             "status": "error",
             "message": "No tests found in file",
-            "ingested": 0
+            "ingested": 0,
+            "total": 0,
+            "warnings": [],
+            "errors": ["No tests found in file"]
         }
     
     logger.info(f"Found {len(raw_tests)} tests to process")
@@ -166,11 +175,15 @@ def ingest_functional_tests(
                     # Delete old points first
                     client.delete(
                         collection_name=TEST_DOCS_COLLECTION,
-                        points_selector={"filter": {"must": [{"key": "uid", "match": {"value": test_doc.uid}}]}}
+                        points_selector=Filter(
+                            must=[FieldCondition(key="uid", match=MatchValue(value=test_doc.uid))]
+                        )
                     )
                     client.delete(
                         collection_name=TEST_STEPS_COLLECTION,
-                        points_selector={"filter": {"must": [{"key": "parent_uid", "match": {"value": test_doc.uid}}]}}
+                        points_selector=Filter(
+                            must=[FieldCondition(key="parent_uid", match=MatchValue(value=test_doc.uid))]
+                        )
                     )
                 
                 # Create new points

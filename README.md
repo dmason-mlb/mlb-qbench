@@ -9,6 +9,8 @@ A local-only test retrieval service using Qdrant vector database with cloud embe
 - **Field Harmonization**: Unified schema across functional and API test sources
 - **Hybrid Search**: Combined document and step-level semantic search with filtering
 - **Idempotent Ingestion**: Safe re-ingestion with automatic updates
+- **Security**: API key authentication, rate limiting, CORS protection, path validation
+- **MCP Integration**: AI assistant integration via Model Context Protocol
 
 ## Quick Start
 
@@ -28,6 +30,10 @@ cd mlb-qbench
 # Copy environment variables
 cp .env.example .env
 # Edit .env with your API keys and configuration
+# IMPORTANT: Set secure API keys for production use:
+# - MASTER_API_KEY: Main API key for admin access
+# - API_KEYS: Comma-separated list of allowed API keys
+# - QDRANT_API_KEY: Authentication for Qdrant database
 
 # Install Python dependencies
 pip install -e .
@@ -177,6 +183,10 @@ python -m src.mcp
 # See docs/MCP_USAGE.md for details
 ```
 
+**Important**: The MCP server uses the same API authentication as the main service. Ensure your `.env` file has:
+- `MASTER_API_KEY` or `API_KEYS` configured
+- The MCP config must include the matching API key in its environment variables
+
 ## Development
 
 ### Running Tests
@@ -225,6 +235,35 @@ mlb-qbench/
 "Jewel event regressions"
 → Finds both document and step-level matches for jewel_event
 ```
+
+## Security
+
+The MLB QBench service implements several security measures:
+
+### API Authentication
+All API endpoints require authentication via X-API-Key header:
+```bash
+curl -X POST http://localhost:8000/search \
+  -H "X-API-Key: your-api-key-here" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "test query"}'
+```
+
+### Rate Limiting
+- Search endpoints: 60 requests/minute per IP
+- Ingestion endpoints: 5 requests/minute per IP
+
+### CORS Protection
+Configure allowed origins in `.env`:
+```bash
+CORS_ORIGINS=http://localhost:3000,https://yourapp.com
+```
+
+### Path Validation
+Ingestion endpoints validate file paths to prevent directory traversal attacks. Files must be within the `data/` directory.
+
+### Qdrant Authentication
+Enable Qdrant authentication by setting `QDRANT_API_KEY` in both `.env` and docker-compose.yml.
 
 ## Troubleshooting
 

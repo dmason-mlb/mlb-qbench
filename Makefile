@@ -16,6 +16,7 @@ dev: ## Start Qdrant and API server for development
 	@echo "Waiting for Qdrant to be ready..."
 	@sleep 5
 	@echo "Starting API server..."
+	@echo "Note: Set MASTER_API_KEY and API_KEYS in .env for authentication"
 	uvicorn src.service.main:app --reload --host 0.0.0.0 --port 8000
 
 stop: ## Stop all services
@@ -35,9 +36,9 @@ test: ## Run all tests
 
 ingest: ## Ingest sample test data
 	@echo "Ingesting functional tests..."
-	python -m src.ingest.ingest_functional data/functional_tests_xray.json
+	python -m src.ingest.ingest_functional data/functional_tests_normalized.json
 	@echo "Ingesting API tests..."
-	python -m src.ingest.ingest_api data/api_tests_xray.json
+	python -m src.ingest.ingest_api data/api_tests_normalized.json
 
 search: ## Run example search queries
 	@echo "Testing search queries..."

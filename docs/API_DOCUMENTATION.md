@@ -38,15 +38,33 @@ http://localhost:8000
 ```
 
 ### Authentication
-Currently, the API does not require authentication. In production environments, consider implementing:
-- API key authentication
-- OAuth 2.0
-- JWT tokens
+All API endpoints require authentication using an API key in the `X-API-Key` header.
 
-### Headers
+#### Setting up API Keys
+1. Configure API keys in your `.env` file:
+   ```bash
+   MASTER_API_KEY=your-secure-master-key
+   API_KEYS=client-key-1,client-key-2,client-key-3
+   ```
+
+2. Include the API key in all requests:
+   ```http
+   X-API-Key: your-api-key-here
+   ```
+
+### Required Headers
 ```http
 Content-Type: application/json
 Accept: application/json
+X-API-Key: your-api-key-here
+```
+
+### Authentication Errors
+Missing or invalid API keys return a 401 Unauthorized response:
+```json
+{
+  "detail": "Missing API key"
+}
 ```
 
 ## Endpoints
@@ -136,6 +154,7 @@ Content-Type: application/json
 ```bash
 curl -X POST http://localhost:8000/search \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key-here" \
   -d '{
     "query": "Spanish localization on Team Page",
     "top_k": 10,
@@ -199,9 +218,10 @@ Content-Type: application/json
 ```bash
 curl -X POST http://localhost:8000/ingest \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key-here" \
   -d '{
-    "functional_path": "data/functional_tests_xray.json",
-    "api_path": "data/api_tests_xray.json"
+    "functional_path": "data/functional_tests_normalized.json",
+    "api_path": "data/api_tests_normalized.json"
   }'
 ```
 
@@ -260,7 +280,8 @@ GET /by-jira/{key}
 #### Example
 
 ```bash
-curl http://localhost:8000/by-jira/FRAMED-1390
+curl http://localhost:8000/by-jira/FRAMED-1390 \
+  -H "X-API-Key: your-api-key-here"
 ```
 
 ### GET /similar/{key}
@@ -315,12 +336,15 @@ GET /similar/{key}?top_k=10&scope=all
 
 ```bash
 # Find 5 tests similar to FRAMED-1390, searching only documents
-curl "http://localhost:8000/similar/FRAMED-1390?top_k=5&scope=docs"
+curl "http://localhost:8000/similar/FRAMED-1390?top_k=5&scope=docs" \
+  -H "X-API-Key: your-api-key-here"
 ```
 
 ### GET /healthz
 
 Health check endpoint for monitoring service status.
+
+**Note**: The health check endpoint does not require authentication.
 
 #### Request
 
@@ -467,19 +491,24 @@ Currently, pagination is controlled by the `top_k` parameter. Future versions ma
 
 ## Rate Limiting
 
-Currently, no rate limiting is implemented. In production, consider:
+The API implements rate limiting to ensure fair usage:
+
+- **Search endpoints** (`/search`, `/by-jira/*`, `/similar/*`): 60 requests per minute per IP
+- **Ingestion endpoint** (`/ingest`): 5 requests per minute per IP
+- **Health check** (`/healthz`): No rate limit
+
+When rate limit is exceeded:
 
 ```http
 HTTP/1.1 429 Too Many Requests
-X-RateLimit-Limit: 100
+X-RateLimit-Limit: 60
 X-RateLimit-Remaining: 0
 X-RateLimit-Reset: 1678886400
-Retry-After: 3600
+Retry-After: 60
 
 {
-  "detail": "Rate limit exceeded. Try again in 3600 seconds.",
-  "status_code": 429,
-  "type": "rate_limit_exceeded"
+  "detail": "Rate limit exceeded",
+  "status_code": 429
 }
 ```
 
@@ -491,15 +520,23 @@ Retry-After: 3600
 import requests
 import json
 
+# Configure API key
+API_KEY = "your-api-key-here"
+BASE_URL = "http://localhost:8000"
+
 # Search for tests
-def search_tests(query, filters=None):
-    url = "http://localhost:8000/search"
+def search_tests(query, filters=None, api_key=API_KEY):
+    url = f"{BASE_URL}/search"
+    headers = {
+        "Content-Type": "application/json",
+        "X-API-Key": api_key
+    }
     payload = {
         "query": query,
         "top_k": 20,
         "filters": filters or {}
     }
-    response = requests.post(url, json=payload)
+    response = requests.post(url, json=payload, headers=headers)
     response.raise_for_status()
     return response.json()
 
@@ -526,11 +563,12 @@ interface SearchRequest {
   };
 }
 
-async function searchTests(request: SearchRequest) {
+async function searchTests(request: SearchRequest, apiKey: string) {
   const response = await fetch('http://localhost:8000/search', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'X-API-Key': apiKey,
     },
     body: JSON.stringify(request),
   });
@@ -543,6 +581,7 @@ async function searchTests(request: SearchRequest) {
 }
 
 // Example usage
+const API_KEY = 'your-api-key-here';
 const results = await searchTests({
   query: 'live game validations',
   top_k: 10,
@@ -550,15 +589,19 @@ const results = await searchTests({
     tags: ['live_state'],
     priority: 'High'
   }
-});
+}, API_KEY);
 ```
 
 ### cURL
 
 ```bash
+# Set your API key
+API_KEY="your-api-key-here"
+
 # Search with complex filters
 curl -X POST http://localhost:8000/search \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
   -d '{
     "query": "player statistics API",
     "top_k": 15,
@@ -571,28 +614,35 @@ curl -X POST http://localhost:8000/search \
   }' | jq
 
 # Get test by JIRA key
-curl http://localhost:8000/by-jira/FRAMED-1390 | jq
+curl http://localhost:8000/by-jira/FRAMED-1390 \
+  -H "X-API-Key: $API_KEY" | jq
 
 # Find similar tests
-curl "http://localhost:8000/similar/FRAMED-1390?top_k=5&scope=docs" | jq
+curl "http://localhost:8000/similar/FRAMED-1390?top_k=5&scope=docs" \
+  -H "X-API-Key: $API_KEY" | jq
 
-# Check health
+# Check health (no API key required)
 curl http://localhost:8000/healthz | jq
 ```
 
 ### HTTPie
 
 ```bash
+# Set your API key
+API_KEY="your-api-key-here"
+
 # Search request
 http POST localhost:8000/search \
+  "X-API-Key:$API_KEY" \
   query="team page tests" \
   top_k=10 \
   filters:='{"priority": "High"}'
 
 # Get by JIRA
-http GET localhost:8000/by-jira/FRAMED-1390
+http GET localhost:8000/by-jira/FRAMED-1390 \
+  "X-API-Key:$API_KEY"
 
-# Health check
+# Health check (no API key required)
 http GET localhost:8000/healthz
 ```
 

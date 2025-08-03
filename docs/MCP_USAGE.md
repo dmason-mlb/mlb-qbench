@@ -51,6 +51,7 @@ To use the MCP server with Claude Desktop, add the following to your Claude conf
       "args": ["-m", "src.mcp"],
       "env": {
         "API_BASE_URL": "http://localhost:8000",
+        "API_KEY": "your-api-key-here",
         "PYTHONPATH": "/path/to/mlb-qbench"
       }
     }
@@ -61,6 +62,10 @@ To use the MCP server with Claude Desktop, add the following to your Claude conf
 Make sure to:
 - Update the `PYTHONPATH` to point to your mlb-qbench directory
 - Ensure the QBench API is running on the specified `API_BASE_URL`
+- **Important**: Set the `API_KEY` to match one of the keys configured in your `.env` file:
+  - Either use the value from `MASTER_API_KEY`
+  - Or use one of the comma-separated values from `API_KEYS`
+  - Without a valid API key, all search requests will fail with 401 errors
 
 ## Available Tools
 

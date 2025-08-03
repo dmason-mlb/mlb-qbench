@@ -1,13 +1,25 @@
 #!/usr/bin/env python3
-"""Test search functionality with example queries."""
+"""Test search functionality with example queries.
+
+Usage:
+    python scripts/test_search.py
+    
+    # With custom API key:
+    API_KEY=your-api-key python scripts/test_search.py
+    
+    # With custom API URL:
+    API_BASE_URL=http://localhost:8000 API_KEY=your-api-key python scripts/test_search.py
+"""
 
 import requests
 import json
 import sys
+import os
 from typing import Dict, Any, List
 
-# API base URL
-BASE_URL = "http://localhost:8000"
+# API configuration
+BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+API_KEY = os.getenv("API_KEY", "test-key-123")  # Default test key
 
 
 def pretty_print_result(result: Dict[str, Any]) -> None:
@@ -39,8 +51,13 @@ def test_search(query: str, filters: Dict[str, Any] = None, top_k: int = 5) -> L
     if filters:
         payload["filters"] = filters
     
+    headers = {
+        "Content-Type": "application/json",
+        "X-API-Key": API_KEY
+    }
+    
     try:
-        response = requests.post(f"{BASE_URL}/search", json=payload)
+        response = requests.post(f"{BASE_URL}/search", json=payload, headers=headers)
         response.raise_for_status()
         
         results = response.json()
@@ -82,8 +99,10 @@ def test_by_jira(jira_key: str) -> Dict[str, Any]:
     """Test get by JIRA endpoint."""
     print(f"\n📋 Getting test by JIRA key: {jira_key}")
     
+    headers = {"X-API-Key": API_KEY}
+    
     try:
-        response = requests.get(f"{BASE_URL}/by-jira/{jira_key}")
+        response = requests.get(f"{BASE_URL}/by-jira/{jira_key}", headers=headers)
         response.raise_for_status()
         
         test = response.json()
@@ -99,8 +118,10 @@ def test_similar(jira_key: str, top_k: int = 5) -> List[Dict[str, Any]]:
     """Test similar endpoint."""
     print(f"\n🔗 Finding tests similar to: {jira_key}")
     
+    headers = {"X-API-Key": API_KEY}
+    
     try:
-        response = requests.get(f"{BASE_URL}/similar/{jira_key}?top_k={top_k}")
+        response = requests.get(f"{BASE_URL}/similar/{jira_key}?top_k={top_k}", headers=headers)
         response.raise_for_status()
         
         results = response.json()
@@ -121,6 +142,8 @@ def main():
     """Run test queries."""
     print("MLB QBench Search Tests")
     print("=" * 80)
+    print(f"API URL: {BASE_URL}")
+    print(f"API Key: {API_KEY[:8]}..." if API_KEY else "No API key configured")
     
     # Check health first
     if not test_health():
