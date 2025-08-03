@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import structlog
 from dotenv import load_dotenv
-from qdrant_client.models import Filter, FieldCondition, MatchValue, MatchAny
+from qdrant_client.models import Filter, FieldCondition, MatchValue, MatchAny, MatchText
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -81,36 +81,78 @@ app.add_middleware(
 
 
 def build_filter(filters: Optional[Dict[str, Any]]) -> Optional[Filter]:
-    """Build Qdrant filter from request filters."""
+    """
+    Build Qdrant filter from request filters with security validation.
+    
+    Args:
+        filters: Dictionary of filter conditions (will be validated)
+        
+    Returns:
+        Qdrant Filter object or None if no valid filters
+        
+    Raises:
+        ValueError: If filter validation fails
+    """
     if not filters:
         return None
     
-    conditions = []
+    # Import here to avoid circular imports
+    from src.models.filter_models import validate_and_sanitize_filters
     
-    # Handle different filter types
-    for field, value in filters.items():
-        if isinstance(value, list):
-            # Array fields (tags, platforms, etc.)
-            if value:  # Only add if list is not empty
+    try:
+        # Validate and sanitize input filters
+        sanitized_filters = validate_and_sanitize_filters(filters)
+        
+        if not sanitized_filters:
+            return None
+        
+        conditions = []
+        
+        # Handle different filter types with validated input
+        for field, value in sanitized_filters.items():
+            # Handle special operators
+            if field.endswith("__contains"):
+                # Contains operator for string fields
+                actual_field = field.replace("__contains", "")
+                conditions.append(
+                    FieldCondition(
+                        key=actual_field,
+                        match=MatchText(text=str(value))
+                    )
+                )
+            elif isinstance(value, list):
+                # Array fields (tags, platforms, etc.) or IN operations
+                if value:  # Only add if list is not empty
+                    conditions.append(
+                        FieldCondition(
+                            key=field,
+                            match=MatchAny(any=value)
+                        )
+                    )
+            else:
+                # Single value fields
                 conditions.append(
                     FieldCondition(
                         key=field,
-                        match=MatchAny(any=value)
+                        match=MatchValue(value=value)
                     )
                 )
-        else:
-            # Single value fields
-            conditions.append(
-                FieldCondition(
-                    key=field,
-                    match=MatchValue(value=value)
-                )
-            )
-    
-    if conditions:
-        return Filter(must=conditions)
-    
-    return None
+        
+        if conditions:
+            return Filter(must=conditions)
+        
+        return None
+        
+    except Exception as e:
+        # Log the security violation attempt
+        logger.error(
+            "Filter validation failed - potential security threat",
+            error=str(e),
+            filters=filters,
+            extra={"security_event": True}
+        )
+        # Re-raise as ValueError with generic message to avoid info disclosure
+        raise ValueError("Invalid filter parameters") from None
 
 
 async def search_documents(query: str, top_k: int, filters: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:

@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from typing import List, Optional, Literal
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, validator, field_validator
 
 
 class TestStep(BaseModel):
@@ -84,10 +84,31 @@ class TestDoc(BaseModel):
 class SearchRequest(BaseModel):
     """Search request model."""
     
-    query: str = Field(..., description="Search query text")
-    top_k: int = Field(20, ge=1, le=100, description="Number of results to return")
-    filters: Optional[dict] = Field(None, description="Optional filters")
+    query: str = Field(..., min_length=1, max_length=1000, description="Search query text")
+    top_k: int = Field(20, ge=1, le=100, description="Number of results to return") 
+    filters: Optional[dict] = Field(None, description="Optional filters (will be validated for security)")
     scope: Literal["all", "docs", "steps"] = Field("all", description="Search scope")
+    
+    @field_validator('query')
+    @classmethod
+    def validate_query(cls, v: str) -> str:
+        """Validate search query for security."""
+        import re
+        
+        # Remove any potentially dangerous characters
+        if re.search(r'[<>&"\']', v):
+            raise ValueError("Search query contains potentially dangerous characters")
+        
+        # Check for SQL injection patterns (though we're using vector DB)
+        sql_patterns = [
+            r'\bUNION\b', r'\bSELECT\b', r'\bINSERT\b', r'\bDELETE\b', 
+            r'\bDROP\b', r'\bCREATE\b', r'\bALTER\b', r'\-\-', r'/\*'
+        ]
+        for pattern in sql_patterns:
+            if re.search(pattern, v.upper()):
+                raise ValueError("Search query contains potentially dangerous SQL patterns")
+        
+        return v.strip()
 
 
 class SearchResult(BaseModel):
