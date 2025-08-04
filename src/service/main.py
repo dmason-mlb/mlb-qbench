@@ -232,8 +232,9 @@ async def search_steps(query: str, top_k: int, filters: Optional[Dict[str, Any]]
         )
 
         # Combine with user filters
-        if build_filter(filters):
-            parent_filter.must.extend(build_filter(filters).must)
+        user_filter = build_filter(filters)
+        if user_filter:
+            parent_filter.must.extend(user_filter.must)
 
         # Query parent docs
         scroll_result = await asyncio.to_thread(
