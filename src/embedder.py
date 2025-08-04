@@ -32,6 +32,7 @@ class EmbeddingProvider(ABC):
         # Handle single text
         if isinstance(texts, str):
             result = (await self._embed_batch([texts]))[0]
+            self.embed_count += 1
             return result
         
         # Handle empty list
