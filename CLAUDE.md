@@ -27,8 +27,11 @@ cd src/service && uvicorn main:app --reload --host 0.0.0.0 --port 8000
 # Data Operations
 python -m src.models.schema         # Create/recreate Qdrant collections
 make ingest                         # Ingest all test data
-python -m src.ingest.ingest_functional data/functional_tests_xray.json
-python -m src.ingest.ingest_api data/api_tests_xray.json
+python -m src.ingest.ingest_functional data/functional_tests_normalized.json
+python -m src.ingest.ingest_api data/api_tests_normalized.json
+
+# MCP Integration
+make mcp-server                     # Start MCP server for AI tool integration
 
 # Code Quality
 make lint                           # Run ruff and mypy
@@ -90,6 +93,13 @@ The search endpoint (`/search`) implements:
 - `GET /similar/{uid}`: Find similar tests
 - `GET /health`: Service and collection health
 
+### MCP Server Integration
+The project includes an MCP (Model Context Protocol) server for AI tool integration:
+- Located in `src/mcp/server.py`
+- Exposes search and ingestion capabilities as tools
+- Configured via `mcp.json` for Claude Desktop integration
+- Start with `make mcp-server` or `python -m src.mcp`
+
 ## Environment Configuration
 
 Required environment variables:
@@ -107,6 +117,10 @@ OPENAI_API_KEY=your-key
 COHERE_API_KEY=your-key
 VERTEX_PROJECT=your-project
 AZURE_OPENAI_ENDPOINT=your-endpoint
+
+# API Authentication (optional)
+MASTER_API_KEY=your-master-key      # Admin access for all operations
+API_KEYS=key1,key2,key3            # Comma-separated list of valid API keys
 ```
 
 ## Key Technical Decisions
@@ -130,6 +144,12 @@ AZURE_OPENAI_ENDPOINT=your-endpoint
 - Tenacity retry logic on embedding calls
 - Graceful handling of missing fields during normalization
 - Detailed logging with structlog for debugging
+
+### API Security
+- Optional API key authentication system in `src/auth/`
+- Master key for admin operations, multiple user keys supported
+- Rate limiting with slowapi integration
+- Secure key validation and request filtering
 
 ## Common Development Tasks
 
