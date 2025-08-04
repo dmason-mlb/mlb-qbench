@@ -23,6 +23,7 @@ from ..ingest.ingest_functional import ingest_functional_tests
 from ..ingest.ingest_api import ingest_api_tests
 from ..auth import require_api_key
 from ..auth.auth import get_api_key
+from ..security import validate_data_file_path, PathValidationError
 
 # Load environment variables
 load_dotenv()
@@ -402,37 +403,49 @@ async def ingest(request: Request, ingest_request: IngestRequest, api_key: str =
         
         # Ingest functional tests if path provided
         if ingest_request.functional_path:
-            # Validate path to prevent directory traversal
-            functional_path = Path(ingest_request.functional_path).resolve()
-            data_dir = Path("data").resolve()
-            
-            if not str(functional_path).startswith(str(data_dir)):
-                raise HTTPException(status_code=400, detail="Invalid file path: must be within data directory")
-            
-            if not functional_path.exists():
-                raise HTTPException(status_code=404, detail=f"Functional file not found: {ingest_request.functional_path}")
-            
-            result = ingest_functional_tests(str(functional_path))
-            response.functional_ingested = result.get("ingested", 0)
-            response.errors.extend(result.get("errors", []))
-            response.warnings.extend(result.get("warnings", []))
+            try:
+                # Secure path validation to prevent SSRF and directory traversal
+                functional_path = validate_data_file_path(ingest_request.functional_path)
+                
+                if not functional_path.exists():
+                    raise HTTPException(status_code=404, detail=f"Functional file not found: {ingest_request.functional_path}")
+                
+                result = ingest_functional_tests(str(functional_path))
+                response.functional_ingested = result.get("ingested", 0)
+                response.errors.extend(result.get("errors", []))
+                response.warnings.extend(result.get("warnings", []))
+                
+            except PathValidationError as e:
+                logger.error(
+                    "Functional path validation failed",
+                    path=ingest_request.functional_path,
+                    error=str(e),
+                    extra={"security_event": True}
+                )
+                raise HTTPException(status_code=400, detail=f"Invalid functional file path: {str(e)}")
         
         # Ingest API tests if path provided
         if ingest_request.api_path:
-            # Validate path to prevent directory traversal
-            api_path = Path(ingest_request.api_path).resolve()
-            data_dir = Path("data").resolve()
-            
-            if not str(api_path).startswith(str(data_dir)):
-                raise HTTPException(status_code=400, detail="Invalid file path: must be within data directory")
-            
-            if not api_path.exists():
-                raise HTTPException(status_code=404, detail=f"API file not found: {ingest_request.api_path}")
-            
-            result = ingest_api_tests(str(api_path))
-            response.api_ingested = result.get("ingested", 0)
-            response.errors.extend(result.get("errors", []))
-            response.warnings.extend(result.get("warnings", []))
+            try:
+                # Secure path validation to prevent SSRF and directory traversal
+                api_path = validate_data_file_path(ingest_request.api_path)
+                
+                if not api_path.exists():
+                    raise HTTPException(status_code=404, detail=f"API file not found: {ingest_request.api_path}")
+                
+                result = ingest_api_tests(str(api_path))
+                response.api_ingested = result.get("ingested", 0)
+                response.errors.extend(result.get("errors", []))
+                response.warnings.extend(result.get("warnings", []))
+                
+            except PathValidationError as e:
+                logger.error(
+                    "API path validation failed",
+                    path=ingest_request.api_path,
+                    error=str(e),
+                    extra={"security_event": True}
+                )
+                raise HTTPException(status_code=400, detail=f"Invalid API file path: {str(e)}")
         
         logger.info(
             "Ingestion completed",
