@@ -232,11 +232,13 @@ async def search_steps(query: str, top_k: int, filters: Optional[Dict[str, Any]]
         )
 
         # Combine with user filters
-        if build_filter(filters):
-            parent_filter.must.extend(build_filter(filters).must)
+        user_filter = build_filter(filters)
+        if user_filter:
+            parent_filter.must.extend(user_filter.must)
 
         # Query parent docs
-        scroll_result = qdrant_client.scroll(
+        scroll_result = await asyncio.to_thread(
+            qdrant_client.scroll,
             collection_name=TEST_DOCS_COLLECTION,
             scroll_filter=parent_filter,
             limit=len(parent_uids),
@@ -250,6 +252,91 @@ async def search_steps(query: str, top_k: int, filters: Optional[Dict[str, Any]]
             uid: steps for uid, steps in steps_by_parent.items()
             if uid in valid_parent_uids
         }
+
+    return steps_by_parent
+
+
+async def search_documents_with_embedding(query: str, query_embedding, top_k: int, filters: Optional[Dict[str, Any]], container: Container) -> List[Dict[str, Any]]:
+    """Search test documents using pre-computed embedding."""
+    qdrant_client = container.get('qdrant_client')
+
+    results = await asyncio.to_thread(
+        qdrant_client.search,
+        collection_name=TEST_DOCS_COLLECTION,
+        query_vector=query_embedding,
+        limit=top_k,
+        query_filter=build_filter(filters),
+        with_payload=True,
+        with_vectors=False
+    )
+
+    return [(r.payload, r.score) for r in results]
+
+
+async def search_steps_with_embedding(query: str, query_embedding, top_k: int, filters: Optional[Dict[str, Any]], container: Container) -> Dict[str, List[Dict[str, Any]]]:
+    """Search test steps using pre-computed embedding and group by parent."""
+    qdrant_client = container.get('qdrant_client')
+
+    # Search steps
+    step_results = await asyncio.to_thread(
+        qdrant_client.search,
+        collection_name=TEST_STEPS_COLLECTION,
+        query_vector=query_embedding,
+        limit=top_k * 3,  # Get more steps to ensure good parent coverage
+        query_filter=build_filter(filters),
+        with_payload=True,
+        with_vectors=False
+    )
+
+    # Group by parent and filter steps whose parents match user filters
+    steps_by_parent = {}
+    parent_uids = set()
+
+    for result in step_results:
+        parent_uid = result.payload.get("parent_uid")
+        if parent_uid:
+            parent_uids.add(parent_uid)
+            if parent_uid not in steps_by_parent:
+                steps_by_parent[parent_uid] = []
+            steps_by_parent[parent_uid].append({
+                "step_data": result.payload,
+                "score": result.score
+            })
+
+    if not parent_uids:
+        return {}
+
+    # Build filter for parent documents
+    parent_filter = Filter(
+        must=[
+            FieldCondition(
+                key="uid",
+                match=MatchAny(any=list(parent_uids))
+            )
+        ]
+    )
+
+    # Combine with user filters
+    user_filter = build_filter(filters)
+    if user_filter:
+        parent_filter.must.extend(user_filter.must)
+
+    # Query parent docs
+    scroll_result = await asyncio.to_thread(
+        qdrant_client.scroll,
+        collection_name=TEST_DOCS_COLLECTION,
+        scroll_filter=parent_filter,
+        limit=len(parent_uids),
+        with_payload=["uid"],
+        with_vectors=False
+    )
+
+    # Keep only steps whose parents pass the filter
+    valid_parent_uids = {point.payload["uid"] for point in scroll_result[0]}
+    steps_by_parent = {
+        uid: steps for uid, steps in steps_by_parent.items() 
+        if uid in valid_parent_uids
+    }
 
     return steps_by_parent
 
@@ -298,7 +385,8 @@ async def merge_and_rerank_results(
             doc_filter = Filter(
                 must=[FieldCondition(key="uid", match=MatchValue(value=uid))]
             )
-            docs = qdrant_client.scroll(
+            docs = await asyncio.to_thread(
+                qdrant_client.scroll,
                 collection_name=TEST_DOCS_COLLECTION,
                 scroll_filter=doc_filter,
                 limit=1,
@@ -402,31 +490,53 @@ async def metrics(request: Request, api_key: str = Security(get_api_key)):
 
 async def _search_impl(request: Request, search_request: SearchRequest) -> List[SearchResult]:
     """Internal search implementation with concurrent processing."""
-    import asyncio
-    
     container = request.app.state.container
+
+    # Pre-compute embedding once for scope="all" to avoid duplication
+    query_embedding = None
+    if search_request.scope == "all":
+        embedder = container.get('embedder')
+        query_embedding = await embedder.embed(prepare_text_for_embedding(search_request.query))
 
     # Prepare concurrent search tasks
     tasks = []
     
     # Add document search task if needed
     if search_request.scope in ["all", "docs"]:
-        doc_task = search_documents(
-            search_request.query,
-            search_request.top_k,
-            search_request.filters,
-            container
-        )
+        if query_embedding is not None:
+            doc_task = search_documents_with_embedding(
+                search_request.query,
+                query_embedding,
+                search_request.top_k,
+                search_request.filters,
+                container
+            )
+        else:
+            doc_task = search_documents(
+                search_request.query,
+                search_request.top_k,
+                search_request.filters,
+                container
+            )
         tasks.append(("docs", doc_task))
     
     # Add step search task if needed  
     if search_request.scope in ["all", "steps"]:
-        steps_task = search_steps(
-            search_request.query,
-            search_request.top_k,
-            search_request.filters,
-            container
-        )
+        if query_embedding is not None:
+            steps_task = search_steps_with_embedding(
+                search_request.query,
+                query_embedding,
+                search_request.top_k,
+                search_request.filters,
+                container
+            )
+        else:
+            steps_task = search_steps(
+                search_request.query,
+                search_request.top_k,
+                search_request.filters,
+                container
+            )
         tasks.append(("steps", steps_task))
 
     # Execute searches concurrently
