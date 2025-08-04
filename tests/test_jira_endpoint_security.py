@@ -16,42 +16,48 @@ class TestJiraEndpointSecurity:
         return TestClient(app)
     
     @pytest.fixture
-    def mock_qdrant_client(self):
-        """Mock the Qdrant client."""
-        with patch('src.service.main.qdrant_client') as mock_client:
-            # Mock scroll response for valid JIRA keys
-            mock_scroll_result = ([
-                MagicMock(payload={
-                    "uid": "TEST-123",
-                    "jiraKey": "TEST-123", 
-                    "title": "Test Case",
-                    "summary": "Test summary",
-                    "tags": ["test"],
-                    "priority": "High",
-                    "testType": "Manual",
-                    "platforms": [],
-                    "folderStructure": None,
-                    "preconditions": [],
-                    "steps": [],
-                    "expectedResults": None,
-                    "testData": None,
-                    "relatedIssues": [],
-                    "testPath": None,
-                    "source": "functional_tests_xray.json",
-                    "description": None,
-                    "testCaseId": None
-                })
-            ], None)
-            mock_client.scroll.return_value = mock_scroll_result
-            yield mock_client
+    def test_container(self, mock_container):
+        """Override container with test-specific configuration."""
+        # Configure the scroll response for valid JIRA keys
+        mock_scroll_result = ([
+            MagicMock(payload={
+                "uid": "TEST-123",
+                "jiraKey": "TEST-123", 
+                "title": "Test Case",
+                "summary": "Test summary",
+                "tags": ["test"],
+                "priority": "High",
+                "testType": "Manual",
+                "platforms": [],
+                "folderStructure": None,
+                "preconditions": [],
+                "steps": [],
+                "expectedResults": None,
+                "testData": None,
+                "relatedIssues": [],
+                "testPath": None,
+                "source": "functional_tests_xray.json",
+                "description": None,
+                "testCaseId": None
+            })
+        ], None)
+        
+        # Update the mock qdrant client in the container
+        mock_qdrant_client = mock_container.get('qdrant_client')
+        mock_qdrant_client.scroll.return_value = mock_scroll_result
+        
+        return mock_container
     
     @patch('src.auth.secure_key_manager._key_manager', None)
-    def test_get_by_jira_valid_key(self, client, mock_qdrant_client):
+    def test_get_by_jira_valid_key(self, client, test_container):
         """Test get by JIRA endpoint with valid JIRA key."""
         with patch.dict('os.environ', {"MASTER_API_KEY": "test-key"}, clear=True):
             # Clear global key manager
             from src.auth import secure_key_manager
             secure_key_manager._key_manager = None
+            
+            # Set up the app state container for testing
+            client.app.state.container = test_container
             
             headers = {"X-API-Key": "test-key"}
             
@@ -62,82 +68,88 @@ class TestJiraEndpointSecurity:
             assert data["jiraKey"] == "TEST-123"
     
     @patch('src.auth.secure_key_manager._key_manager', None)
-    def test_get_by_jira_invalid_format(self, client, mock_qdrant_client):
+    def test_get_by_jira_invalid_format(self, client, test_container):
         """Test get by JIRA endpoint with invalid JIRA key format."""
         with patch.dict('os.environ', {"MASTER_API_KEY": "test-key"}, clear=True):
             # Clear global key manager
             from src.auth import secure_key_manager
             secure_key_manager._key_manager = None
             
-            headers = {"X-API-Key": "test-key"}
-            
-            invalid_keys = [
-                "test-123",         # Lowercase
-                "TEST-123'",        # SQL injection attempt
-                "TEST-123<script>", # XSS attempt
-                "TEST;DROP TABLE",  # SQL injection
-                "TEST-0",           # Invalid number format
-                "TOOLONGPROJECT-123", # Too long project
-            ]
-            
-            for invalid_key in invalid_keys:
-                response = client.get(f"/by-jira/{invalid_key}", headers=headers)
+            # Mock the app state to use our test container
+            with patch.object(client.app.state, 'container', test_container):
+                headers = {"X-API-Key": "test-key"}
                 
-                assert response.status_code == 400
-                assert "Invalid JIRA key format" in response.json()["detail"]
-            
-            # Test path traversal separately - may be blocked by FastAPI routing (404) or our validation (400)
-            path_traversal_response = client.get("/by-jira/../etc/passwd", headers=headers)
-            assert path_traversal_response.status_code in [400, 404]  # Either is good security
-            
-            # Test empty string separately (may result in 404 instead of 400)
-            empty_response = client.get("/by-jira/", headers=headers)
-            assert empty_response.status_code in [400, 404]  # Either is acceptable
+                invalid_keys = [
+                    "test-123",         # Lowercase
+                    "TEST-123'",        # SQL injection attempt
+                    "TEST-123<script>", # XSS attempt
+                    "TEST;DROP TABLE",  # SQL injection
+                    "TEST-0",           # Invalid number format
+                    "TOOLONGPROJECT-123", # Too long project
+                ]
+                
+                for invalid_key in invalid_keys:
+                    response = client.get(f"/by-jira/{invalid_key}", headers=headers)
+                    
+                    assert response.status_code == 400
+                    assert "Invalid JIRA key format" in response.json()["detail"]
+                
+                # Test path traversal separately - may be blocked by FastAPI routing (404) or our validation (400)
+                path_traversal_response = client.get("/by-jira/../etc/passwd", headers=headers)
+                assert path_traversal_response.status_code in [400, 404]  # Either is good security
+                
+                # Test empty string separately (may result in 404 instead of 400)
+                empty_response = client.get("/by-jira/", headers=headers)
+                assert empty_response.status_code in [400, 404]  # Either is acceptable
     
     @patch('src.auth.secure_key_manager._key_manager', None)
-    def test_find_similar_valid_key(self, client, mock_qdrant_client):
+    def test_find_similar_valid_key(self, client, test_container):
         """Test find similar endpoint with valid JIRA key."""
         with patch.dict('os.environ', {"MASTER_API_KEY": "test-key"}, clear=True):
             # Clear global key manager
             from src.auth import secure_key_manager
             secure_key_manager._key_manager = None
             
-            # Mock search function to avoid complex search logic
-            with patch('src.service.main.search') as mock_search:
-                mock_search.return_value = []
-                
-                headers = {"X-API-Key": "test-key"}
-                
-                response = client.get("/similar/PROJECT-456?top_k=5", headers=headers)
-                
-                assert response.status_code == 200
+            # Mock the app state to use our test container
+            with patch.object(client.app.state, 'container', test_container):
+                # Mock search function to avoid complex search logic
+                with patch('src.service.main._search_impl') as mock_search:
+                    mock_search.return_value = []
+                    
+                    headers = {"X-API-Key": "test-key"}
+                    
+                    response = client.get("/similar/PROJECT-456?top_k=5", headers=headers)
+                    
+                    assert response.status_code == 200
     
     @patch('src.auth.secure_key_manager._key_manager', None)
-    def test_find_similar_invalid_format(self, client, mock_qdrant_client):
+    def test_find_similar_invalid_format(self, client, test_container):
         """Test find similar endpoint with invalid JIRA key format."""
         with patch.dict('os.environ', {"MASTER_API_KEY": "test-key"}, clear=True):
             # Clear global key manager
             from src.auth import secure_key_manager
             secure_key_manager._key_manager = None
             
-            headers = {"X-API-Key": "test-key"}
-            
-            dangerous_keys = [
-                "project-123",      # Lowercase
-                "PROJ-123|cat",     # Command injection
-                "PROJ-123&wget",    # Command injection
-                "PROJ-123'OR'1=1",  # SQL injection
-                "PROJ<script>",     # XSS
-            ]
-            
-            for dangerous_key in dangerous_keys:
-                response = client.get(f"/similar/{dangerous_key}", headers=headers)
+            # Mock the app state to use our test container
+            with patch.object(client.app.state, 'container', test_container):
+                headers = {"X-API-Key": "test-key"}
                 
-                assert response.status_code == 400
-                assert "Invalid JIRA key format" in response.json()["detail"]
-            
-            # Note: CRLF injection test skipped as HTTP client blocks control characters in URLs
-            # This is actually good security - the transport layer provides additional protection
+                dangerous_keys = [
+                    "project-123",      # Lowercase
+                    "PROJ-123|cat",     # Command injection
+                    "PROJ-123&wget",    # Command injection
+                    "PROJ-123'OR'1=1",  # SQL injection
+                    "PROJ<script>",     # XSS
+                ]
+                
+                for dangerous_key in dangerous_keys:
+                    response = client.get(f"/similar/{dangerous_key}", headers=headers)
+                    
+                    assert response.status_code == 400
+                    assert "Invalid JIRA key format" in response.json()["detail"]
+                
+                # Note: CRLF injection test skipped as HTTP client blocks control characters in URLs
+                # This is actually good security - the transport layer provides additional protection
     
     @patch('src.auth.secure_key_manager._key_manager', None)
     def test_jira_endpoints_require_authentication(self, client, mock_qdrant_client):

@@ -96,9 +96,16 @@ def mock_embedding_provider():
 def mock_async_embedding_provider():
     """Mock async embedding provider for testing."""
     mock_embedder = AsyncMock()
-    mock_embedder.embed = AsyncMock(return_value=[[0.1] * 3072])
+    mock_embedder.embed = AsyncMock(return_value=[0.1] * 3072)  # Single embedding
     mock_embedder.embed_batch = AsyncMock(return_value=[[[0.1] * 3072], [[0.2] * 3072]])
     mock_embedder.get_dimension = AsyncMock(return_value=3072)
+    mock_embedder.get_stats = MagicMock(return_value={
+        "provider": "MockEmbedder",
+        "model": "test-model",
+        "embed_count": 0,
+        "total_tokens": 0
+    })
+    mock_embedder.close = AsyncMock()
     return mock_embedder
 
 
@@ -146,6 +153,35 @@ def sample_test_data():
             ]
         }
     }
+
+
+@pytest.fixture
+def mock_container(mock_qdrant_client, mock_async_embedding_provider):
+    """Mock dependency injection container for testing."""
+    from src.container import Container
+    
+    container = Container()
+    
+    # Register mocked services
+    container.register_instance('qdrant_client', mock_qdrant_client)
+    container.register_instance('embedder', mock_async_embedding_provider)
+    
+    # Mock validators
+    mock_path_validator = MagicMock()
+    mock_path_validator.return_value = MagicMock()
+    mock_path_validator.return_value.exists.return_value = True
+    container.register_instance('path_validator', mock_path_validator)
+    
+    mock_jira_validator = MagicMock()
+    mock_jira_validator.return_value = "TEST-123"  # Valid JIRA key
+    container.register_instance('jira_validator', mock_jira_validator)
+    
+    # Mock rate limiter
+    mock_rate_limiter = MagicMock()
+    mock_rate_limiter.limit.return_value = lambda f: f  # Passthrough decorator
+    container.register_instance('rate_limiter', mock_rate_limiter)
+    
+    return container
 
 
 @pytest.fixture

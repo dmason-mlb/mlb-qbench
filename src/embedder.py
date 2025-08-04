@@ -1,10 +1,12 @@
 """Provider-agnostic embedding wrapper for cloud embedding services."""
 
 import os
+import asyncio
 from abc import ABC, abstractmethod
 from typing import List, Union, Optional, Dict, Any
 import time
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import AsyncRetrying
 import structlog
 import numpy as np
 
@@ -21,15 +23,15 @@ class EmbeddingProvider(ABC):
         self.total_tokens = 0
     
     @abstractmethod
-    def _embed_batch(self, texts: List[str]) -> List[List[float]]:
+    async def _embed_batch(self, texts: List[str]) -> List[List[float]]:
         """Embed a batch of texts. Must be implemented by subclasses."""
         pass
     
-    def embed(self, texts: Union[str, List[str]]) -> Union[List[float], List[List[float]]]:
+    async def embed(self, texts: Union[str, List[str]]) -> Union[List[float], List[List[float]]]:
         """Embed text(s) and return embedding vector(s)."""
         # Handle single text
         if isinstance(texts, str):
-            result = self._embed_batch([texts])[0]
+            result = (await self._embed_batch([texts]))[0]
             return result
         
         # Handle empty list
@@ -43,7 +45,7 @@ class EmbeddingProvider(ABC):
             logger.info(f"Embedding batch {i // self.batch_size + 1}", 
                        batch_size=len(batch), total_texts=len(texts))
             
-            batch_embeddings = self._embed_batch(batch)
+            batch_embeddings = await self._embed_batch(batch)
             all_embeddings.extend(batch_embeddings)
             self.embed_count += len(batch)
         
@@ -57,6 +59,19 @@ class EmbeddingProvider(ABC):
             "embed_count": self.embed_count,
             "total_tokens": self.total_tokens,
         }
+    
+    async def close(self):
+        """Close async resources. Override in subclasses if needed."""
+        pass
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Get embedding provider statistics."""
+        return {
+            "provider": self.__class__.__name__,
+            "model": getattr(self, 'model_name', 'unknown'),
+            "embed_count": getattr(self, '_embed_count', 0),
+            "total_tokens": getattr(self, '_total_tokens', 0)
+        }
 
 
 class OpenAIEmbedder(EmbeddingProvider):
@@ -64,7 +79,7 @@ class OpenAIEmbedder(EmbeddingProvider):
     
     def __init__(self, model: str = None, batch_size: int = 100):
         try:
-            from openai import OpenAI
+            from openai import AsyncOpenAI
         except ImportError:
             raise ImportError("openai package not installed. Run: pip install openai")
         
@@ -77,34 +92,39 @@ class OpenAIEmbedder(EmbeddingProvider):
         if not api_key:
             raise ValueError("OPENAI_API_KEY environment variable not set")
         
-        self.client = OpenAI(api_key=api_key)
+        self.client = AsyncOpenAI(api_key=api_key)
         logger.info(f"Initialized OpenAI embedder with model {self.model}")
     
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(Exception)
-    )
-    def _embed_batch(self, texts: List[str]) -> List[List[float]]:
+    async def _embed_batch(self, texts: List[str]) -> List[List[float]]:
         """Embed a batch of texts using OpenAI API."""
-        try:
-            response = self.client.embeddings.create(
-                model=self.model,
-                input=texts,
-                encoding_format="float"
-            )
-            
-            # Track token usage
-            if hasattr(response, 'usage'):
-                self.total_tokens += response.usage.total_tokens
-            
-            # Extract embeddings in order
-            embeddings = [item.embedding for item in response.data]
-            return embeddings
-            
-        except Exception as e:
-            logger.error(f"OpenAI embedding error: {e}")
-            raise
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(3),
+            wait=wait_exponential(multiplier=1, min=1, max=10),
+            retry=retry_if_exception_type(Exception)
+        ):
+            with attempt:
+                try:
+                    response = await self.client.embeddings.create(
+                        model=self.model,
+                        input=texts,
+                        encoding_format="float"
+                    )
+                    
+                    # Track token usage
+                    if hasattr(response, 'usage'):
+                        self.total_tokens += response.usage.total_tokens
+                    
+                    # Extract embeddings in order
+                    embeddings = [item.embedding for item in response.data]
+                    return embeddings
+                    
+                except Exception as e:
+                    logger.error(f"OpenAI embedding error: {e}")
+                    raise
+    
+    async def close(self):
+        """Close OpenAI client."""
+        await self.client.close()
 
 
 class CohereEmbedder(EmbeddingProvider):
@@ -125,31 +145,36 @@ class CohereEmbedder(EmbeddingProvider):
         if not api_key:
             raise ValueError("COHERE_API_KEY environment variable not set")
         
-        self.client = cohere.Client(api_key)
+        self.client = cohere.AsyncClient(api_key)
         logger.info(f"Initialized Cohere embedder with model {self.model}")
     
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(Exception)
-    )
-    def _embed_batch(self, texts: List[str]) -> List[List[float]]:
+    async def _embed_batch(self, texts: List[str]) -> List[List[float]]:
         """Embed a batch of texts using Cohere API."""
-        try:
-            response = self.client.embed(
-                texts=texts,
-                model=self.model,
-                input_type="search_document",  # Optimized for retrieval
-                truncate="END"  # Truncate from end if too long
-            )
-            
-            # Cohere returns numpy arrays, convert to lists
-            embeddings = [emb.tolist() for emb in response.embeddings]
-            return embeddings
-            
-        except Exception as e:
-            logger.error(f"Cohere embedding error: {e}")
-            raise
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(3),
+            wait=wait_exponential(multiplier=1, min=1, max=10),
+            retry=retry_if_exception_type(Exception)
+        ):
+            with attempt:
+                try:
+                    response = await self.client.embed(
+                        texts=texts,
+                        model=self.model,
+                        input_type="search_document",  # Optimized for retrieval
+                        truncate="END"  # Truncate from end if too long
+                    )
+                    
+                    # Cohere returns numpy arrays, convert to lists
+                    embeddings = [emb.tolist() for emb in response.embeddings]
+                    return embeddings
+                    
+                except Exception as e:
+                    logger.error(f"Cohere embedding error: {e}")
+                    raise
+    
+    async def close(self):
+        """Close Cohere client."""
+        await self.client.close()
 
 
 class VertexEmbedder(EmbeddingProvider):
@@ -177,20 +202,24 @@ class VertexEmbedder(EmbeddingProvider):
         self.model_client = TextEmbeddingModel.from_pretrained(self.model)
         logger.info(f"Initialized Vertex AI embedder with model {self.model}")
     
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(Exception)
-    )
-    def _embed_batch(self, texts: List[str]) -> List[List[float]]:
+    async def _embed_batch(self, texts: List[str]) -> List[List[float]]:
         """Embed a batch of texts using Vertex AI."""
-        try:
-            embeddings = self.model_client.get_embeddings(texts)
-            return [emb.values for emb in embeddings]
-            
-        except Exception as e:
-            logger.error(f"Vertex AI embedding error: {e}")
-            raise
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(3),
+            wait=wait_exponential(multiplier=1, min=1, max=10),
+            retry=retry_if_exception_type(Exception)
+        ):
+            with attempt:
+                try:
+                    # Run synchronous vertex call in thread pool
+                    embeddings = await asyncio.to_thread(
+                        self.model_client.get_embeddings, texts
+                    )
+                    return [emb.values for emb in embeddings]
+                    
+                except Exception as e:
+                    logger.error(f"Vertex AI embedding error: {e}")
+                    raise
 
 
 class AzureEmbedder(EmbeddingProvider):
@@ -198,7 +227,7 @@ class AzureEmbedder(EmbeddingProvider):
     
     def __init__(self, model: str = None, batch_size: int = 100):
         try:
-            from openai import AzureOpenAI
+            from openai import AsyncAzureOpenAI
         except ImportError:
             raise ImportError("openai package not installed. Run: pip install openai")
         
@@ -218,7 +247,7 @@ class AzureEmbedder(EmbeddingProvider):
         if not api_key or not endpoint:
             raise ValueError("Azure OpenAI credentials not set")
         
-        self.client = AzureOpenAI(
+        self.client = AsyncAzureOpenAI(
             api_key=api_key,
             api_version=api_version,
             azure_endpoint=endpoint
@@ -226,25 +255,30 @@ class AzureEmbedder(EmbeddingProvider):
         self.deployment = deployment
         logger.info(f"Initialized Azure OpenAI embedder with deployment {deployment}")
     
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(Exception)
-    )
-    def _embed_batch(self, texts: List[str]) -> List[List[float]]:
+    async def _embed_batch(self, texts: List[str]) -> List[List[float]]:
         """Embed a batch of texts using Azure OpenAI."""
-        try:
-            response = self.client.embeddings.create(
-                model=self.deployment,
-                input=texts
-            )
-            
-            embeddings = [item.embedding for item in response.data]
-            return embeddings
-            
-        except Exception as e:
-            logger.error(f"Azure OpenAI embedding error: {e}")
-            raise
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(3),
+            wait=wait_exponential(multiplier=1, min=1, max=10),
+            retry=retry_if_exception_type(Exception)
+        ):
+            with attempt:
+                try:
+                    response = await self.client.embeddings.create(
+                        model=self.deployment,
+                        input=texts
+                    )
+                    
+                    embeddings = [item.embedding for item in response.data]
+                    return embeddings
+                    
+                except Exception as e:
+                    logger.error(f"Azure OpenAI embedding error: {e}")
+                    raise
+    
+    async def close(self):
+        """Close Azure OpenAI client."""
+        await self.client.close()
 
 
 def get_embedder(provider: str = None, model: str = None) -> EmbeddingProvider:
