@@ -63,15 +63,6 @@ class EmbeddingProvider(ABC):
     async def close(self):
         """Close async resources. Override in subclasses if needed."""
         pass
-    
-    def get_stats(self) -> Dict[str, Any]:
-        """Get embedding provider statistics."""
-        return {
-            "provider": self.__class__.__name__,
-            "model": getattr(self, 'model_name', 'unknown'),
-            "embed_count": getattr(self, '_embed_count', 0),
-            "total_tokens": getattr(self, '_total_tokens', 0)
-        }
 
 
 class OpenAIEmbedder(EmbeddingProvider):

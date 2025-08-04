@@ -1,5 +1,6 @@
 """FastAPI service for test retrieval."""
 
+import asyncio
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -174,7 +175,8 @@ async def search_documents(query: str, top_k: int, filters: Optional[Dict[str, A
 
     query_embedding = await embedder.embed(prepare_text_for_embedding(query))
 
-    results = qdrant_client.search(
+    results = await asyncio.to_thread(
+        qdrant_client.search,
         collection_name=TEST_DOCS_COLLECTION,
         query_vector=query_embedding,
         limit=top_k,
@@ -194,7 +196,8 @@ async def search_steps(query: str, top_k: int, filters: Optional[Dict[str, Any]]
     query_embedding = await embedder.embed(prepare_text_for_embedding(query))
 
     # Search steps
-    step_results = qdrant_client.search(
+    step_results = await asyncio.to_thread(
+        qdrant_client.search,
         collection_name=TEST_STEPS_COLLECTION,
         query_vector=query_embedding,
         limit=top_k * 3,  # Get more steps since we'll group by parent
