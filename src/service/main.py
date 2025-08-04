@@ -236,7 +236,8 @@ async def search_steps(query: str, top_k: int, filters: Optional[Dict[str, Any]]
             parent_filter.must.extend(build_filter(filters).must)
 
         # Query parent docs
-        scroll_result = qdrant_client.scroll(
+        scroll_result = await asyncio.to_thread(
+            qdrant_client.scroll,
             collection_name=TEST_DOCS_COLLECTION,
             scroll_filter=parent_filter,
             limit=len(parent_uids),
@@ -298,7 +299,8 @@ async def merge_and_rerank_results(
             doc_filter = Filter(
                 must=[FieldCondition(key="uid", match=MatchValue(value=uid))]
             )
-            docs = qdrant_client.scroll(
+            docs = await asyncio.to_thread(
+                qdrant_client.scroll,
                 collection_name=TEST_DOCS_COLLECTION,
                 scroll_filter=doc_filter,
                 limit=1,
