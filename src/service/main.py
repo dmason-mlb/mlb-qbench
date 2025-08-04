@@ -23,7 +23,7 @@ from ..ingest.ingest_functional import ingest_functional_tests
 from ..ingest.ingest_api import ingest_api_tests
 from ..auth import require_api_key
 from ..auth.auth import get_api_key
-from ..security import validate_data_file_path, PathValidationError
+from ..security import validate_data_file_path, PathValidationError, validate_jira_key, JiraKeyValidationError
 
 # Load environment variables
 load_dotenv()
@@ -467,9 +467,21 @@ async def ingest(request: Request, ingest_request: IngestRequest, api_key: str =
 async def get_by_jira(jira_key: str, api_key: str = require_api_key):
     """Get a test by its JIRA key."""
     try:
+        # Validate JIRA key format to prevent injection attacks
+        try:
+            validated_jira_key = validate_jira_key(jira_key)
+        except JiraKeyValidationError as e:
+            logger.error(
+                "JIRA key validation failed in get_by_jira",
+                jira_key=jira_key,
+                error=str(e),
+                extra={"security_event": True}
+            )
+            raise HTTPException(status_code=400, detail=f"Invalid JIRA key format: {str(e)}")
+        
         # Query by jiraKey
         filter_cond = Filter(
-            must=[FieldCondition(key="jiraKey", match=MatchValue(value=jira_key))]
+            must=[FieldCondition(key="jiraKey", match=MatchValue(value=validated_jira_key))]
         )
         
         results = qdrant_client.scroll(
@@ -481,7 +493,7 @@ async def get_by_jira(jira_key: str, api_key: str = require_api_key):
         )
         
         if not results[0]:
-            raise HTTPException(status_code=404, detail=f"Test not found: {jira_key}")
+            raise HTTPException(status_code=404, detail=f"Test not found: {validated_jira_key}")
         
         test_data = results[0][0].payload
         return TestDoc(**test_data)
@@ -502,10 +514,22 @@ async def find_similar(
 ):
     """Find tests similar to a given test."""
     try:
+        # Validate JIRA key format to prevent injection attacks
+        try:
+            validated_jira_key = validate_jira_key(jira_key)
+        except JiraKeyValidationError as e:
+            logger.error(
+                "JIRA key validation failed in find_similar",
+                jira_key=jira_key,
+                error=str(e),
+                extra={"security_event": True}
+            )
+            raise HTTPException(status_code=400, detail=f"Invalid JIRA key format: {str(e)}")
+        
         # First get the test (call internal logic directly to avoid auth dependency)
         # Query by jiraKey
         filter_cond = Filter(
-            must=[FieldCondition(key="jiraKey", match=MatchValue(value=jira_key))]
+            must=[FieldCondition(key="jiraKey", match=MatchValue(value=validated_jira_key))]
         )
         
         results = qdrant_client.scroll(
@@ -517,7 +541,7 @@ async def find_similar(
         )
         
         if not results[0]:
-            raise HTTPException(status_code=404, detail=f"Test not found: {jira_key}")
+            raise HTTPException(status_code=404, detail=f"Test not found: {validated_jira_key}")
         
         test_data = results[0][0].payload
         test = TestDoc(**test_data)
