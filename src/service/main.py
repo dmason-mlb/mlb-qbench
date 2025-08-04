@@ -490,8 +490,6 @@ async def metrics(request: Request, api_key: str = Security(get_api_key)):
 
 async def _search_impl(request: Request, search_request: SearchRequest) -> List[SearchResult]:
     """Internal search implementation with concurrent processing."""
-    import asyncio
-    
     container = request.app.state.container
 
     # Pre-compute embedding once for scope="all" to avoid duplication
