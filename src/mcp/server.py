@@ -7,18 +7,22 @@ from typing import Any, Optional
 
 import httpx
 import structlog
+from dotenv import load_dotenv
 
 import mcp.server.stdio
 import mcp.types as types
 from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 
+# Load environment variables from .env file
+load_dotenv()
+
 # Configure logging
 logger = structlog.get_logger()
 
 # Get API configuration from environment
 API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
-API_KEY = os.environ.get("API_KEY")
+API_KEY = os.environ.get("API_KEY") or os.environ.get("MASTER_API_KEY")
 
 # Create the MCP server
 server = Server("mlb-qbench")
