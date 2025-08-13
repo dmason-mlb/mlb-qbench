@@ -1,15 +1,15 @@
 """Test authentication functionality."""
 
 import os
-import pytest
+import sys
 from unittest.mock import patch
+
+import pytest
 from fastapi import HTTPException
 
-import sys
-import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.auth.auth import verify_api_key, get_api_key, verify_api_key_with_info
+from src.auth.auth import get_api_key, verify_api_key, verify_api_key_with_info
 
 
 class TestAuthentication:
@@ -22,7 +22,7 @@ class TestAuthentication:
             # Clear global key manager to force reload
             from src.auth import secure_key_manager
             secure_key_manager._key_manager = None
-            
+
             assert verify_api_key("test-master-key") is True
             assert verify_api_key("wrong-key") is False
             assert verify_api_key("") is False
@@ -32,13 +32,13 @@ class TestAuthentication:
         """Test API key verification with individual user keys."""
         with patch.dict(os.environ, {
             "USER_API_KEY_1": "user-key-1",
-            "USER_API_KEY_2": "user-key-2", 
+            "USER_API_KEY_2": "user-key-2",
             "USER_API_KEY_3": "user-key-3"
         }, clear=True):
             # Clear global key manager to force reload
             from src.auth import secure_key_manager
             secure_key_manager._key_manager = None
-            
+
             assert verify_api_key("user-key-1") is True
             assert verify_api_key("user-key-2") is True
             assert verify_api_key("user-key-3") is True
@@ -51,7 +51,7 @@ class TestAuthentication:
             # Clear global key manager to force reload
             from src.auth import secure_key_manager
             secure_key_manager._key_manager = None
-            
+
             assert verify_api_key("any-key") is False
 
     @pytest.mark.asyncio
@@ -59,7 +59,7 @@ class TestAuthentication:
         """Test get_api_key when header is missing."""
         with pytest.raises(HTTPException) as exc_info:
             await get_api_key(None)
-        
+
         assert exc_info.value.status_code == 401
         assert exc_info.value.detail == "Missing API key"
 
@@ -71,10 +71,10 @@ class TestAuthentication:
             # Clear global key manager to force reload
             from src.auth import secure_key_manager
             secure_key_manager._key_manager = None
-            
+
             with pytest.raises(HTTPException) as exc_info:
                 await get_api_key("invalid-key")
-            
+
             assert exc_info.value.status_code == 401
             assert exc_info.value.detail == "Invalid API key"
 
@@ -86,7 +86,7 @@ class TestAuthentication:
             # Clear global key manager to force reload
             from src.auth import secure_key_manager
             secure_key_manager._key_manager = None
-            
+
             result = await get_api_key("valid-key")
             assert result == "valid-key"
 
@@ -101,19 +101,19 @@ class TestAuthentication:
             # Clear global key manager to force reload
             from src.auth import secure_key_manager
             secure_key_manager._key_manager = None
-            
+
             # Test master key
             is_valid, key_id, is_master = verify_api_key_with_info("master-key")
             assert is_valid is True
             assert key_id == "master"
             assert is_master is True
-            
+
             # Test user key
             is_valid, key_id, is_master = verify_api_key_with_info("user-key-1")
             assert is_valid is True
             assert key_id == "user_1"
             assert is_master is False
-            
+
             # Test invalid key
             is_valid, key_id, is_master = verify_api_key_with_info("invalid-key")
             assert is_valid is False

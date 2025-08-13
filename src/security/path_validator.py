@@ -3,7 +3,8 @@
 import os
 import stat
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
+
 import structlog
 
 logger = structlog.get_logger()
@@ -22,49 +23,49 @@ class SecurePathValidator:
     - SSRF attacks via file:// URLs
     - Access to system files
     """
-    
-    def __init__(self, allowed_base_dirs: List[str], allowed_extensions: Optional[List[str]] = None):
+
+    def __init__(self, allowed_base_dirs: list[str], allowed_extensions: Optional[list[str]] = None):
         """
         Initialize the validator.
-        
+
         Args:
             allowed_base_dirs: List of allowed base directories (absolute paths)
             allowed_extensions: List of allowed file extensions (e.g., ['.json', '.txt'])
         """
         self.allowed_base_dirs = [Path(base_dir).resolve() for base_dir in allowed_base_dirs]
         self.allowed_extensions = allowed_extensions or []
-        
+
         # Ensure all base directories exist and are directories
         for base_dir in self.allowed_base_dirs:
             if not base_dir.exists():
                 raise ValueError(f"Base directory does not exist: {base_dir}")
             if not base_dir.is_dir():
                 raise ValueError(f"Base path is not a directory: {base_dir}")
-    
+
     def validate_and_resolve_path(self, user_path: str) -> Path:
         """
         Validate and resolve a user-provided path securely.
-        
+
         Args:
             user_path: User-provided path (can be relative or absolute)
-            
+
         Returns:
             Resolved and validated Path object
-            
+
         Raises:
             PathValidationError: If path validation fails
         """
         if not user_path or not user_path.strip():
             raise PathValidationError("Path cannot be empty")
-        
+
         user_path = user_path.strip()
-        
+
         # Check for dangerous patterns
         dangerous_patterns = [
             "..",           # Directory traversal
             "~",            # Home directory
             "file://",      # File URL scheme
-            "http://",      # HTTP URL scheme  
+            "http://",      # HTTP URL scheme
             "https://",     # HTTPS URL scheme
             "ftp://",       # FTP URL scheme
             "\x00",         # Null byte
@@ -75,7 +76,7 @@ class SecurePathValidator:
             "$(",           # Command substitution
             "${",           # Variable expansion
         ]
-        
+
         for pattern in dangerous_patterns:
             if pattern in user_path:
                 logger.warning(
@@ -85,14 +86,14 @@ class SecurePathValidator:
                     extra={"security_event": True}
                 )
                 raise PathValidationError(f"Path contains dangerous pattern: {pattern}")
-        
+
         # Convert to path without resolving yet (to check for symlinks first)
         try:
             if os.path.isabs(user_path):
-                # Absolute path 
+                # Absolute path
                 candidate_path = Path(user_path)
             else:
-                # Relative path - join with first allowed base directory  
+                # Relative path - join with first allowed base directory
                 candidate_path = self.allowed_base_dirs[0] / user_path
         except (OSError, ValueError) as e:
             logger.warning(
@@ -101,8 +102,8 @@ class SecurePathValidator:
                 error=str(e),
                 extra={"security_event": True}
             )
-            raise PathValidationError(f"Invalid path format: {user_path}")
-        
+            raise PathValidationError(f"Invalid path format: {user_path}") from None
+
         # Check for symbolic links BEFORE resolving (potential SSRF vector)
         if candidate_path.exists():
             try:
@@ -121,8 +122,8 @@ class SecurePathValidator:
                     error=str(e),
                     extra={"security_event": True}
                 )
-                raise PathValidationError("Unable to validate file status")
-        
+                raise PathValidationError("Unable to validate file status") from None
+
         # Now resolve the path safely
         try:
             candidate_path = candidate_path.resolve()
@@ -133,8 +134,8 @@ class SecurePathValidator:
                 error=str(e),
                 extra={"security_event": True}
             )
-            raise PathValidationError(f"Path resolution failed: {user_path}")
-        
+            raise PathValidationError(f"Path resolution failed: {user_path}") from None
+
         # Check if resolved path is within any allowed base directory
         is_within_allowed = False
         for base_dir in self.allowed_base_dirs:
@@ -144,7 +145,7 @@ class SecurePathValidator:
                 break
             except ValueError:
                 continue
-        
+
         if not is_within_allowed:
             logger.warning(
                 "Path outside allowed directories",
@@ -153,7 +154,7 @@ class SecurePathValidator:
                 extra={"security_event": True}
             )
             raise PathValidationError("Path is outside allowed directories")
-        
+
         # Check file extension if specified
         if self.allowed_extensions:
             file_suffix = candidate_path.suffix.lower()
@@ -166,13 +167,13 @@ class SecurePathValidator:
                     extra={"security_event": True}
                 )
                 raise PathValidationError(f"File extension '{file_suffix}' not allowed")
-        
+
         # Additional checks for existing files
         if candidate_path.exists():
             # Ensure it's a regular file
             if not candidate_path.is_file():
                 raise PathValidationError("Path must point to a regular file")
-            
+
             # Check file size (prevent DoS)
             try:
                 file_size = candidate_path.stat().st_size
@@ -185,14 +186,14 @@ class SecurePathValidator:
                     )
                     raise PathValidationError("File too large (max 100MB)")
             except (OSError, ValueError) as e:
-                raise PathValidationError(f"Unable to check file size: {e}")
-        
+                raise PathValidationError(f"Unable to check file size: {e}") from e
+
         logger.info(
             "Path validation successful",
             original_path=user_path,
             resolved_path=str(candidate_path)
         )
-        
+
         return candidate_path
 
 
@@ -216,13 +217,13 @@ def get_data_path_validator() -> SecurePathValidator:
 def validate_data_file_path(user_path: str) -> Path:
     """
     Validate a file path for data ingestion.
-    
+
     Args:
         user_path: User-provided file path
-        
+
     Returns:
         Validated and resolved Path object
-        
+
     Raises:
         PathValidationError: If validation fails
     """

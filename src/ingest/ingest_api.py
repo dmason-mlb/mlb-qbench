@@ -3,12 +3,13 @@
 import json
 import sys
 import uuid
-from typing import Any, Dict, List
+from typing import Any, Optional
 
 import structlog
 from dotenv import load_dotenv
 from qdrant_client.models import FieldCondition, Filter, MatchValue, PointStruct
 
+from ..counter_service import get_test_id_counter
 from ..embedder import combine_test_fields_for_embedding, get_embedder
 from ..models.schema import TEST_DOCS_COLLECTION, TEST_STEPS_COLLECTION, get_client
 from ..models.test_models import TestDoc
@@ -17,7 +18,7 @@ from .normalize import normalize_test_batch
 logger = structlog.get_logger()
 
 
-def load_api_tests(file_path: str) -> List[Dict[str, Any]]:
+def load_api_tests(file_path: str) -> list[dict[str, Any]]:
     """Load API tests from JSON file."""
     try:
         with open(file_path, encoding='utf-8') as f:
@@ -48,17 +49,26 @@ def load_api_tests(file_path: str) -> List[Dict[str, Any]]:
         return []
 
 
-async def create_points_from_test(test_doc: TestDoc, embedder) -> tuple[PointStruct, List[PointStruct]]:
+async def create_points_from_test(test_doc: TestDoc, embedder, test_id: Optional[int] = None) -> tuple[PointStruct, list[PointStruct]]:
     """Create Qdrant points from a test document."""
     # Generate document-level embedding
-    doc_text = combine_test_fields_for_embedding(test_doc.dict())
+    doc_text = combine_test_fields_for_embedding(test_doc.model_dump())
     doc_embedding = await embedder.embed(doc_text)
+    
+    # Use provided test_id or get from test_doc
+    if test_id is None:
+        test_id = test_doc.testId
+        if test_id is None:
+            # This shouldn't happen in new code but handle for safety
+            counter = get_test_id_counter()
+            test_id = counter.get_next_id()
 
     # Create document point
     doc_point = PointStruct(
         id=str(uuid.uuid4()),
         vector=doc_embedding,
         payload={
+            "testId": test_id,
             "uid": test_doc.uid,
             "jiraKey": test_doc.jiraKey,
             "testCaseId": test_doc.testCaseId,
@@ -91,7 +101,8 @@ async def create_points_from_test(test_doc: TestDoc, embedder) -> tuple[PointStr
             id=str(uuid.uuid4()),
             vector=step_embedding,
             payload={
-                "parent_uid": test_doc.uid,
+                "parent_test_id": test_id,
+                "parent_uid": test_doc.uid,  # Keep for backward compatibility
                 "step_index": step.index,
                 "action": step.action,
                 "expected": step.expected
@@ -102,58 +113,69 @@ async def create_points_from_test(test_doc: TestDoc, embedder) -> tuple[PointStr
     return doc_point, step_points
 
 
-async def create_points_from_test_batch(test_docs: List[TestDoc], embedder, embed_batch_size: int = 25) -> tuple[List[PointStruct], List[PointStruct]]:
+async def create_points_from_test_batch(test_docs: list[TestDoc], embedder, embed_batch_size: int = 25, test_ids: Optional[list[int]] = None) -> tuple[list[PointStruct], list[PointStruct]]:
     """Create Qdrant points from a batch of test documents with efficient batch embedding."""
     import asyncio
     
+    # Get test IDs if not provided
+    if test_ids is None:
+        counter = get_test_id_counter()
+        # Reserve a range of IDs for this batch
+        start_id, end_id = counter.reserve_range(len(test_docs))
+        test_ids = list(range(start_id, end_id + 1))
+    
+    # Assign test IDs to documents
+    for test_doc, test_id in zip(test_docs, test_ids):
+        test_doc.testId = test_id
+
     # Prepare all texts for batch embedding
     doc_texts = []
     step_texts = []
     doc_metadata = []
     step_metadata = []
-    
+
     # Collect all document texts
     for test_doc in test_docs:
-        doc_text = combine_test_fields_for_embedding(test_doc.dict())
+        doc_text = combine_test_fields_for_embedding(test_doc.model_dump())
         doc_texts.append(doc_text)
         doc_metadata.append(test_doc)
-    
+
     # Collect all step texts
     for test_doc in test_docs:
         for step in test_doc.steps:
             step_text = f"{step.action} Expected: {', '.join(step.expected)}"
             step_texts.append(step_text)
-            step_metadata.append((test_doc.uid, step))
-    
+            step_metadata.append((test_doc.testId, test_doc.uid, step))
+
     # Batch embed all texts concurrently
     embed_tasks = []
-    
+
     # Split document texts into batches
     for i in range(0, len(doc_texts), embed_batch_size):
         batch = doc_texts[i:i + embed_batch_size]
         if batch:
             embed_tasks.append(('docs', i // embed_batch_size, embedder.embed(batch)))
-    
-    # Split step texts into batches  
+
+    # Split step texts into batches
     for i in range(0, len(step_texts), embed_batch_size):
         batch = step_texts[i:i + embed_batch_size]
         if batch:
             embed_tasks.append(('steps', i // embed_batch_size, embedder.embed(batch)))
-    
+
     # Execute all embedding requests concurrently
     if embed_tasks:
         task_info, embedding_results = zip(*[(task[:-1], task[-1]) for task in embed_tasks])
         embeddings_list = await asyncio.gather(*embedding_results, return_exceptions=True)
-        
+
         # Process embedding results
         doc_embeddings = []
         step_embeddings = []
-        
+
         for (embed_type, batch_idx), embeddings in zip(task_info, embeddings_list):
             if isinstance(embeddings, Exception):
                 logger.error(f"Batch embedding failed for {embed_type} batch {batch_idx}: {embeddings}")
                 raise embeddings
-            
+
             if embed_type == 'docs':
                 doc_embeddings.extend(embeddings)
             elif embed_type == 'steps':
@@ -161,7 +183,7 @@ async def create_points_from_test_batch(test_docs: List[TestDoc], embedder, embe
     else:
         doc_embeddings = []
         step_embeddings = []
-    
+
     # Create document points
     doc_points = []
     for test_doc, doc_embedding in zip(doc_metadata, doc_embeddings):
@@ -169,6 +191,7 @@ async def create_points_from_test_batch(test_docs: List[TestDoc], embedder, embe
             id=str(uuid.uuid4()),
             vector=doc_embedding,
             payload={
+                "testId": test_doc.testId,
                 "uid": test_doc.uid,
                 "jiraKey": test_doc.jiraKey,
                 "testCaseId": test_doc.testCaseId,
@@ -191,37 +214,40 @@ async def create_points_from_test_batch(test_docs: List[TestDoc], embedder, embe
             }
         )
         doc_points.append(doc_point)
-    
+
     # Create step points
     step_points = []
-    for (parent_uid, step), step_embedding in zip(step_metadata, step_embeddings):
+    for (parent_test_id, parent_uid, step), step_embedding in zip(step_metadata, step_embeddings):
         step_point = PointStruct(
             id=str(uuid.uuid4()),
             vector=step_embedding,
             payload={
-                "parent_uid": parent_uid,
+                "parent_test_id": parent_test_id,
+                "parent_uid": parent_uid,  # Keep for backward compatibility
                 "step_index": step.index,
                 "action": step.action,
                 "expected": step.expected
             }
         )
         step_points.append(step_point)
-    
+
     return doc_points, step_points
 
 
 async def ingest_api_tests(
     file_path: str,
     batch_size: int = 50,
-    recreate: bool = False
-) -> Dict[str, Any]:
+    recreate: bool = False,
+    embedder=None,
+    client=None
+) -> dict[str, Any]:
     """Ingest API tests into Qdrant."""
     # Load environment variables
     load_dotenv()
 
-    # Initialize clients
-    client = get_client()
-    embedder = get_embedder()
+    # Initialize clients (use provided ones or create new ones)
+    client = client or get_client()
+    embedder = embedder or get_embedder()
 
     # Load and normalize tests
     logger.info(f"Loading API tests from {file_path}")
@@ -247,17 +273,24 @@ async def ingest_api_tests(
     for warning in warnings:
         logger.warning(warning)
 
-    # Check existing UIDs to enable idempotent updates
+    # Check existing UIDs and testIds to enable idempotent updates
     existing_uids = set()
+    existing_test_ids = {}  # Map uid to testId
     try:
-        # Query for all UIDs (this is efficient with keyword index)
+        # Query for all UIDs and testIds (this is efficient with keyword index)
         scroll_result = client.scroll(
             collection_name=TEST_DOCS_COLLECTION,
             limit=10000,
-            with_payload=["uid"],
+            with_payload=["uid", "testId"],
             with_vectors=False
         )
-        existing_uids = {point.payload["uid"] for point in scroll_result[0]}
+        for point in scroll_result[0]:
+            uid = point.payload.get("uid")
+            test_id = point.payload.get("testId")
+            if uid:
+                existing_uids.add(uid)
+                if test_id is not None:
+                    existing_test_ids[uid] = test_id
         logger.info(f"Found {len(existing_uids)} existing tests")
     except Exception as e:
         logger.warning(f"Could not check existing tests: {e}")
@@ -277,34 +310,52 @@ async def ingest_api_tests(
         update_tests = []
         new_tests = []
         
+        # Assign testIds
         for test_doc in batch:
             if test_doc.uid in existing_uids:
+                # Preserve existing testId for updates
+                test_doc.testId = existing_test_ids.get(test_doc.uid)
                 update_tests.append(test_doc)
             else:
                 new_tests.append(test_doc)
-        
+
         # Delete old points for tests being updated
         for test_doc in update_tests:
             try:
-                logger.info(f"Updating existing test {test_doc.uid}")
+                logger.info(f"Updating existing test {test_doc.uid} (testId: {test_doc.testId})")
                 updated += 1
-                client.delete(
-                    collection_name=TEST_DOCS_COLLECTION,
-                    points_selector=Filter(
-                        must=[FieldCondition(key="uid", match=MatchValue(value=test_doc.uid))]
+                # Delete by testId if available, otherwise fall back to uid
+                if test_doc.testId is not None:
+                    client.delete(
+                        collection_name=TEST_DOCS_COLLECTION,
+                        points_selector=Filter(
+                            must=[FieldCondition(key="testId", match=MatchValue(value=test_doc.testId))]
+                        )
                     )
-                )
-                client.delete(
-                    collection_name=TEST_STEPS_COLLECTION,
-                    points_selector=Filter(
-                        must=[FieldCondition(key="parent_uid", match=MatchValue(value=test_doc.uid))]
+                    client.delete(
+                        collection_name=TEST_STEPS_COLLECTION,
+                        points_selector=Filter(
+                            must=[FieldCondition(key="parent_test_id", match=MatchValue(value=test_doc.testId))]
+                        )
                     )
-                )
+                else:
+                    client.delete(
+                        collection_name=TEST_DOCS_COLLECTION,
+                        points_selector=Filter(
+                            must=[FieldCondition(key="uid", match=MatchValue(value=test_doc.uid))]
+                        )
+                    )
+                    client.delete(
+                        collection_name=TEST_STEPS_COLLECTION,
+                        points_selector=Filter(
+                            must=[FieldCondition(key="parent_uid", match=MatchValue(value=test_doc.uid))]
+                        )
+                    )
             except Exception as e:
                 error_msg = f"Error deleting old points for test {test_doc.uid}: {e}"
                 logger.error(error_msg)
                 errors.append(error_msg)
-        
+
         # Process all tests in batch (both new and updated)
         try:
             if batch:
@@ -314,9 +365,9 @@ async def ingest_api_tests(
                 doc_points.extend(batch_doc_points)
                 step_points.extend(batch_step_points)
                 processed += len(batch)
-                
+
                 logger.info(f"Batch processed: {len(batch_doc_points)} docs, {len(batch_step_points)} steps")
-                
+
         except Exception as e:
             error_msg = f"Error processing batch {i // batch_size + 1}: {e}"
             logger.error(error_msg)

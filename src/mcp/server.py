@@ -1,17 +1,17 @@
 """MCP server implementation for MLB QBench."""
 
 import asyncio
-import json
 import os
-import sys
-from typing import Any, Dict, List, Optional, Sequence
+from collections.abc import Sequence
+from typing import Any, Optional
+
+import httpx
+import structlog
 
 import mcp.server.stdio
 import mcp.types as types
 from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
-import structlog
-import httpx
 
 # Configure logging
 logger = structlog.get_logger()
@@ -25,7 +25,7 @@ server = Server("mlb-qbench")
 
 
 @server.list_tools()
-async def handle_list_tools() -> List[types.Tool]:
+async def handle_list_tools() -> list[types.Tool]:
     """Return list of available tools."""
     return [
         types.Tool(
@@ -156,7 +156,7 @@ async def handle_list_tools() -> List[types.Tool]:
 
 @server.call_tool()
 async def handle_call_tool(
-    name: str, arguments: Optional[Dict[str, Any]] = None
+    name: str, arguments: Optional[dict[str, Any]] = None
 ) -> Sequence[types.TextContent | types.ImageContent | types.EmbeddedResource]:
     """Handle tool execution."""
     try:
@@ -164,7 +164,7 @@ async def handle_call_tool(
         headers = {"Content-Type": "application/json"}
         if API_KEY:
             headers["X-API-Key"] = API_KEY
-        
+
         async with httpx.AsyncClient(timeout=30.0, headers=headers) as client:
             if name == "search_tests":
                 # Execute search
@@ -191,13 +191,13 @@ async def handle_call_tool(
                     text += f"- Priority: {test['priority']}\n"
                     text += f"- Tags: {', '.join(test.get('tags', []))}\n"
                     text += f"- Score: {result['score']:.3f}\n"
-                    
+
                     if result.get("matched_steps"):
                         text += f"- Matched Steps: {result['matched_steps']}\n"
-                    
+
                     if test.get("summary"):
                         text += f"- Summary: {test['summary'][:200]}...\n"
-                    
+
                     text += "\n"
                     formatted_results.append(text)
 
@@ -218,10 +218,10 @@ async def handle_call_tool(
                 text += f"- Priority: {test['priority']}\n"
                 text += f"- Tags: {', '.join(test.get('tags', []))}\n"
                 text += f"- Platforms: {', '.join(test.get('platforms', []))}\n"
-                
+
                 if test.get("summary"):
                     text += f"\n**Summary:**\n{test['summary']}\n"
-                
+
                 if test.get("steps"):
                     text += f"\n**Steps ({len(test['steps'])}):**\n"
                     for step in test["steps"][:3]:  # Show first 3 steps
@@ -289,15 +289,15 @@ async def handle_call_tool(
                 health = response.json()
 
                 text = f"**Service Health: {health['status'].upper()}**\n\n"
-                
+
                 if "qdrant" in health and health["qdrant"]["status"] == "connected":
                     text += "**Qdrant Collections:**\n"
                     for coll_name, coll_info in health["qdrant"]["collections"].items():
                         if isinstance(coll_info, dict) and "points_count" in coll_info:
                             text += f"- {coll_name}: {coll_info['points_count']} points\n"
-                
+
                 if "embedder" in health:
-                    text += f"\n**Embedder:**\n"
+                    text += "\n**Embedder:**\n"
                     text += f"- Provider: {health['embedder']['provider']}\n"
                     text += f"- Model: {health['embedder']['model']}\n"
 
@@ -310,7 +310,7 @@ async def handle_call_tool(
         error_detail = ""
         try:
             error_detail = e.response.json().get("detail", "")
-        except:
+        except Exception:
             error_detail = e.response.text
         return [
             types.TextContent(

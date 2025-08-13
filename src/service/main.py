@@ -3,16 +3,17 @@
 import asyncio
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime
-from typing import Any, Dict, List, Literal, Optional
+from datetime import datetime, timezone
+from typing import Any, Literal, Optional
 
 import structlog
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request, Security
 from fastapi.middleware.cors import CORSMiddleware
 from qdrant_client.models import FieldCondition, Filter, MatchAny, MatchText, MatchValue
-from slowapi import _rate_limit_exceeded_handler
+from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from ..auth import require_api_key
 from ..auth.auth import get_api_key
@@ -24,7 +25,7 @@ from ..embedder import prepare_text_for_embedding
 from ..ingest.ingest_api import ingest_api_tests
 from ..ingest.ingest_functional import ingest_functional_tests
 from ..models.schema import TEST_DOCS_COLLECTION, TEST_STEPS_COLLECTION, check_collections_health
-from ..models.test_models import IngestRequest, IngestResponse, SearchRequest, SearchResult, TestDoc
+from ..models.test_models import IngestRequest, IngestResponse, SearchRequest, SearchResult, TestDoc, UpdateJiraKeyRequest
 from ..security import JiraKeyValidationError, PathValidationError
 
 # Load environment variables
@@ -44,7 +45,6 @@ async def lifespan(app: FastAPI):
 
     # Initialize core services
     qdrant_client = container.get('qdrant_client')
-    embedder = container.get('embedder')
 
     # Check collections health
     health = check_collections_health(qdrant_client)
@@ -54,15 +54,8 @@ async def lifespan(app: FastAPI):
     app.state.container = container
 
     # Set up rate limiter for exception handling
-    limiter = container.get('rate_limiter')
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-
-    # Create decorator functions for rate limiting
-    search_limiter = limiter.limit("60/minute")
-    ingest_limiter = limiter.limit("5/minute")
-    app.state.search_limiter = search_limiter
-    app.state.ingest_limiter = ingest_limiter
 
     yield
 
@@ -79,7 +72,8 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Rate limiter will be initialized in lifespan and stored in app.state.container
+# Create rate limiter instance
+limiter = Limiter(key_func=get_remote_address)
 
 # Add CORS middleware with secure configuration
 allowed_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
@@ -93,16 +87,16 @@ app.add_middleware(
 )
 
 
-def build_filter(filters: Optional[Dict[str, Any]]) -> Optional[Filter]:
+def build_filter(filters: Optional[dict[str, Any]]) -> Optional[Filter]:
     """
     Build Qdrant filter from request filters with security validation.
-    
+
     Args:
         filters: Dictionary of filter conditions (will be validated)
-        
+
     Returns:
         Qdrant Filter object or None if no valid filters
-        
+
     Raises:
         ValueError: If filter validation fails
     """
@@ -168,7 +162,7 @@ def build_filter(filters: Optional[Dict[str, Any]]) -> Optional[Filter]:
         raise ValueError("Invalid filter parameters") from None
 
 
-async def search_documents(query: str, top_k: int, filters: Optional[Dict[str, Any]], container: Container) -> List[Dict[str, Any]]:
+async def search_documents(query: str, top_k: int, filters: Optional[dict[str, Any]], container: Container) -> list[dict[str, Any]]:
     """Search test documents."""
     embedder = container.get('embedder')
     qdrant_client = container.get('qdrant_client')
@@ -188,7 +182,7 @@ async def search_documents(query: str, top_k: int, filters: Optional[Dict[str, A
     return [(r.payload, r.score) for r in results]
 
 
-async def search_steps(query: str, top_k: int, filters: Optional[Dict[str, Any]], container: Container) -> Dict[str, List[Dict[str, Any]]]:
+async def search_steps(query: str, top_k: int, filters: Optional[dict[str, Any]], container: Container) -> dict[str, list[dict[str, Any]]]:
     """Search test steps and group by parent."""
     embedder = container.get('embedder')
     qdrant_client = container.get('qdrant_client')
@@ -205,18 +199,26 @@ async def search_steps(query: str, top_k: int, filters: Optional[Dict[str, Any]]
         with_vectors=False
     )
 
-    # Group steps by parent_uid
+    # Group steps by parent - prefer testId but fall back to uid for backward compatibility
     steps_by_parent = {}
+    parent_test_ids = {}  # Map parent_uid to parent_test_id
+    
     for result in step_results:
+        parent_test_id = result.payload.get("parent_test_id")
         parent_uid = result.payload.get("parent_uid")
-        if parent_uid not in steps_by_parent:
-            steps_by_parent[parent_uid] = []
-        steps_by_parent[parent_uid].append({
-            "step_index": result.payload.get("step_index"),
-            "action": result.payload.get("action"),
-            "expected": result.payload.get("expected", []),
-            "score": result.score
-        })
+        
+        # Use parent_uid as key for backward compatibility
+        if parent_uid:
+            if parent_uid not in steps_by_parent:
+                steps_by_parent[parent_uid] = []
+            steps_by_parent[parent_uid].append({
+                "step_index": result.payload.get("step_index"),
+                "action": result.payload.get("action"),
+                "expected": result.payload.get("expected", []),
+                "score": result.score
+            })
+            if parent_test_id is not None:
+                parent_test_ids[parent_uid] = parent_test_id
 
     # If we have filters, we need to fetch parent docs to apply filters
     if filters and steps_by_parent:
@@ -256,7 +258,7 @@ async def search_steps(query: str, top_k: int, filters: Optional[Dict[str, Any]]
     return steps_by_parent
 
 
-async def search_documents_with_embedding(query: str, query_embedding, top_k: int, filters: Optional[Dict[str, Any]], container: Container) -> List[Dict[str, Any]]:
+async def search_documents_with_embedding(query: str, query_embedding, top_k: int, filters: Optional[dict[str, Any]], container: Container) -> list[dict[str, Any]]:
     """Search test documents using pre-computed embedding."""
     qdrant_client = container.get('qdrant_client')
 
@@ -273,7 +275,7 @@ async def search_documents_with_embedding(query: str, query_embedding, top_k: in
     return [(r.payload, r.score) for r in results]
 
 
-async def search_steps_with_embedding(query: str, query_embedding, top_k: int, filters: Optional[Dict[str, Any]], container: Container) -> Dict[str, List[Dict[str, Any]]]:
+async def search_steps_with_embedding(query: str, query_embedding, top_k: int, filters: Optional[dict[str, Any]], container: Container) -> dict[str, list[dict[str, Any]]]:
     """Search test steps using pre-computed embedding and group by parent."""
     qdrant_client = container.get('qdrant_client')
 
@@ -291,9 +293,12 @@ async def search_steps_with_embedding(query: str, query_embedding, top_k: int, f
     # Group by parent and filter steps whose parents match user filters
     steps_by_parent = {}
     parent_uids = set()
+    parent_test_ids = {}  # Map parent_uid to parent_test_id
 
     for result in step_results:
+        parent_test_id = result.payload.get("parent_test_id")
         parent_uid = result.payload.get("parent_uid")
+        
         if parent_uid:
             parent_uids.add(parent_uid)
             if parent_uid not in steps_by_parent:
@@ -302,6 +307,8 @@ async def search_steps_with_embedding(query: str, query_embedding, top_k: int, f
                 "step_data": result.payload,
                 "score": result.score
             })
+            if parent_test_id is not None:
+                parent_test_ids[parent_uid] = parent_test_id
 
     if not parent_uids:
         return {}
@@ -334,7 +341,7 @@ async def search_steps_with_embedding(query: str, query_embedding, top_k: int, f
     # Keep only steps whose parents pass the filter
     valid_parent_uids = {point.payload["uid"] for point in scroll_result[0]}
     steps_by_parent = {
-        uid: steps for uid, steps in steps_by_parent.items() 
+        uid: steps for uid, steps in steps_by_parent.items()
         if uid in valid_parent_uids
     }
 
@@ -342,11 +349,11 @@ async def search_steps_with_embedding(query: str, query_embedding, top_k: int, f
 
 
 async def merge_and_rerank_results(
-    doc_results: List[tuple[Dict[str, Any], float]],
-    steps_by_parent: Dict[str, List[Dict[str, Any]]],
+    doc_results: list[tuple[dict[str, Any], float]],
+    steps_by_parent: dict[str, list[dict[str, Any]]],
     top_k: int,
     container: Container
-) -> List[SearchResult]:
+) -> list[SearchResult]:
     """Merge document and step search results."""
     # Create a map of uid to document results
     doc_map = {doc[0]["uid"]: (doc[0], doc[1]) for doc in doc_results}
@@ -438,14 +445,14 @@ async def health(request: Request, api_key: str = Security(get_api_key)):
 
         return {
             "status": "healthy" if health_status["status"] == "healthy" else "degraded",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "qdrant": health_status
         }
     except Exception as e:
         logger.error(f"Health check failed: {e}")
         return {
             "status": "unhealthy",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "error": str(e)
         }
 
@@ -455,14 +462,14 @@ async def metrics(request: Request, api_key: str = Security(get_api_key)):
     """Resource usage and performance metrics endpoint."""
     try:
         container = request.app.state.container
-        
+
         # Get embedding provider stats
         embedder = container.get('embedder')
         embedder_stats = embedder.get_stats()
-        
+
         # Get container stats
         container_stats = container.get_service_info()
-        
+
         # Get rate limiter stats (if available)
         limiter = request.app.state.limiter
         limiter_stats = {}
@@ -471,9 +478,9 @@ async def metrics(request: Request, api_key: str = Security(get_api_key)):
                 "storage_type": type(limiter._storage).__name__,
                 "active_limits": len(getattr(limiter._storage, '_storage', {}))
             }
-        
+
         return {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "embedding_provider": embedder_stats,
             "dependency_container": container_stats,
             "rate_limiter": limiter_stats,
@@ -485,10 +492,10 @@ async def metrics(request: Request, api_key: str = Security(get_api_key)):
         }
     except Exception as e:
         logger.error(f"Metrics collection failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-async def _search_impl(request: Request, search_request: SearchRequest) -> List[SearchResult]:
+async def _search_impl(request: Request, search_request: SearchRequest) -> list[SearchResult]:
     """Internal search implementation with concurrent processing."""
     container = request.app.state.container
 
@@ -500,7 +507,7 @@ async def _search_impl(request: Request, search_request: SearchRequest) -> List[
 
     # Prepare concurrent search tasks
     tasks = []
-    
+
     # Add document search task if needed
     if search_request.scope in ["all", "docs"]:
         if query_embedding is not None:
@@ -519,8 +526,8 @@ async def _search_impl(request: Request, search_request: SearchRequest) -> List[
                 container
             )
         tasks.append(("docs", doc_task))
-    
-    # Add step search task if needed  
+
+    # Add step search task if needed
     if search_request.scope in ["all", "steps"]:
         if query_embedding is not None:
             steps_task = search_steps_with_embedding(
@@ -543,16 +550,16 @@ async def _search_impl(request: Request, search_request: SearchRequest) -> List[
     if tasks:
         task_names, task_coroutines = zip(*tasks)
         results_list = await asyncio.gather(*task_coroutines, return_exceptions=True)
-        
+
         # Process results and handle any exceptions
         doc_results = []
         steps_by_parent = {}
-        
+
         for task_name, result in zip(task_names, results_list):
             if isinstance(result, Exception):
                 logger.error(f"Error in {task_name} search: {result}")
                 raise result
-            
+
             if task_name == "docs":
                 doc_results = result
             elif task_name == "steps":
@@ -580,47 +587,31 @@ async def _search_impl(request: Request, search_request: SearchRequest) -> List[
 
     return results
 
-@app.post("/search", response_model=List[SearchResult])
+@app.post("/search", response_model=list[SearchResult])
+@limiter.limit("60/minute")
 async def search(request: Request, search_request: SearchRequest, api_key: str = require_api_key):
     """
     Search for tests using semantic search.
-    
+
     Searches both document-level and step-level vectors,
     merges results, and returns top-k matches.
     """
     try:
-        # Apply rate limiting directly
-        limiter = request.app.state.limiter
-        try:
-            await limiter.limit("60/minute")(request)
-        except RateLimitExceeded:
-            logger.warning(f"Rate limit exceeded for search request from {request.client.host}")
-            raise
-        
         return await _search_impl(request, search_request)
-    except RateLimitExceeded:
-        raise  # Re-raise rate limit exceptions
     except Exception as e:
         logger.error(f"Search error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.post("/ingest", response_model=IngestResponse)
+@limiter.limit("5/minute")
 async def ingest(request: Request, ingest_request: IngestRequest, api_key: str = require_api_key):
     """
     Ingest test data from JSON files.
-    
+
     Can ingest functional tests, API tests, or both.
     """
     try:
-        # Apply rate limiting directly
-        limiter = request.app.state.limiter
-        try:
-            await limiter.limit("5/minute")(request)
-        except RateLimitExceeded:
-            logger.warning(f"Rate limit exceeded for ingest request from {request.client.host}")
-            raise
-        
         container = request.app.state.container
         path_validator = container.get('path_validator')
         response = IngestResponse()
@@ -634,7 +625,10 @@ async def ingest(request: Request, ingest_request: IngestRequest, api_key: str =
                 if not functional_path.exists():
                     raise HTTPException(status_code=404, detail=f"Functional file not found: {ingest_request.functional_path}")
 
-                result = await ingest_functional_tests(str(functional_path))
+                # Pass embedder and client from container to avoid OPENAI_API_KEY dependency
+                embedder = container.get('embedder')
+                qdrant_client = container.get('qdrant_client')
+                result = await ingest_functional_tests(str(functional_path), embedder=embedder, client=qdrant_client)
                 response.functional_ingested = result.get("ingested", 0)
                 response.errors.extend(result.get("errors", []))
                 response.warnings.extend(result.get("warnings", []))
@@ -646,7 +640,7 @@ async def ingest(request: Request, ingest_request: IngestRequest, api_key: str =
                     error=str(e),
                     extra={"security_event": True}
                 )
-                raise HTTPException(status_code=400, detail=f"Invalid functional file path: {str(e)}")
+                raise HTTPException(status_code=400, detail=f"Invalid functional file path: {str(e)}") from None
 
         # Ingest API tests if path provided
         if ingest_request.api_path:
@@ -657,7 +651,10 @@ async def ingest(request: Request, ingest_request: IngestRequest, api_key: str =
                 if not api_path.exists():
                     raise HTTPException(status_code=404, detail=f"API file not found: {ingest_request.api_path}")
 
-                result = await ingest_api_tests(str(api_path))
+                # Pass embedder and client from container to avoid OPENAI_API_KEY dependency
+                embedder = container.get('embedder')
+                qdrant_client = container.get('qdrant_client')
+                result = await ingest_api_tests(str(api_path), embedder=embedder, client=qdrant_client)
                 response.api_ingested = result.get("ingested", 0)
                 response.errors.extend(result.get("errors", []))
                 response.warnings.extend(result.get("warnings", []))
@@ -669,7 +666,7 @@ async def ingest(request: Request, ingest_request: IngestRequest, api_key: str =
                     error=str(e),
                     extra={"security_event": True}
                 )
-                raise HTTPException(status_code=400, detail=f"Invalid API file path: {str(e)}")
+                raise HTTPException(status_code=400, detail=f"Invalid API file path: {str(e)}") from None
 
         logger.info(
             "Ingestion completed",
@@ -680,13 +677,44 @@ async def ingest(request: Request, ingest_request: IngestRequest, api_key: str =
 
         return response
 
-    except RateLimitExceeded:
-        raise  # Re-raise rate limit exceptions
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Ingestion error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get("/tests/{test_id}", response_model=TestDoc)
+async def get_by_test_id(request: Request, test_id: int, api_key: str = require_api_key):
+    """Get a test by its testId."""
+    try:
+        container = request.app.state.container
+        qdrant_client = container.get('qdrant_client')
+
+        # Query by testId
+        filter_cond = Filter(
+            must=[FieldCondition(key="testId", match=MatchValue(value=test_id))]
+        )
+
+        results = qdrant_client.scroll(
+            collection_name=TEST_DOCS_COLLECTION,
+            scroll_filter=filter_cond,
+            limit=1,
+            with_payload=True,
+            with_vectors=False
+        )
+
+        if not results[0]:
+            raise HTTPException(status_code=404, detail=f"Test not found: {test_id}")
+
+        test_data = results[0][0].payload
+        return TestDoc(**test_data)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get by testId error: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.get("/by-jira/{jira_key}", response_model=TestDoc)
@@ -707,7 +735,7 @@ async def get_by_jira(request: Request, jira_key: str, api_key: str = require_ap
                 error=str(e),
                 extra={"security_event": True}
             )
-            raise HTTPException(status_code=400, detail=f"Invalid JIRA key format: {str(e)}")
+            raise HTTPException(status_code=400, detail=f"Invalid JIRA key format: {str(e)}") from None
 
         # Query by jiraKey
         filter_cond = Filter(
@@ -732,7 +760,125 @@ async def get_by_jira(request: Request, jira_key: str, api_key: str = require_ap
         raise
     except Exception as e:
         logger.error(f"Get by JIRA error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.patch("/tests/{test_id}/jira-key", response_model=TestDoc)
+async def update_jira_key(
+    request: Request,
+    test_id: int,
+    update_request: UpdateJiraKeyRequest,
+    api_key: str = require_api_key
+):
+    """Update a test's JIRA key by its testId."""
+    try:
+        container = request.app.state.container
+        jira_validator = container.get('jira_validator')
+        qdrant_client = container.get('qdrant_client')
+
+        # Validate the new JIRA key format
+        try:
+            validated_jira_key = jira_validator(update_request.jiraKey)
+        except JiraKeyValidationError as e:
+            logger.error(
+                "JIRA key validation failed in update_jira_key",
+                jira_key=update_request.jiraKey,
+                error=str(e),
+                extra={"security_event": True}
+            )
+            raise HTTPException(status_code=400, detail=f"Invalid JIRA key format: {str(e)}") from None
+
+        # First, check if the test exists
+        filter_cond = Filter(
+            must=[FieldCondition(key="testId", match=MatchValue(value=test_id))]
+        )
+
+        results = qdrant_client.scroll(
+            collection_name=TEST_DOCS_COLLECTION,
+            scroll_filter=filter_cond,
+            limit=1,
+            with_payload=True,
+            with_vectors=False
+        )
+
+        if not results[0]:
+            raise HTTPException(status_code=404, detail=f"Test not found: {test_id}")
+
+        # Get the existing test data
+        test_data = results[0][0].payload
+        point_id = results[0][0].id
+        
+        # Update the JIRA key
+        test_data["jiraKey"] = validated_jira_key
+        
+        # Also update uid if it was using jiraKey as uid
+        if test_data.get("uid") == test_data.get("jiraKey") or not test_data.get("jiraKey"):
+            test_data["uid"] = validated_jira_key
+
+        # Update the point in Qdrant
+        qdrant_client.set_payload(
+            collection_name=TEST_DOCS_COLLECTION,
+            payload={
+                "jiraKey": validated_jira_key,
+                "uid": test_data["uid"]
+            },
+            points=[point_id]
+        )
+
+        logger.info(
+            "Updated JIRA key for test",
+            test_id=test_id,
+            new_jira_key=validated_jira_key
+        )
+
+        return TestDoc(**test_data)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Update JIRA key error: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get("/tests/without-jira", response_model=list[TestDoc])
+async def get_tests_without_jira(
+    request: Request,
+    limit: int = Query(20, ge=1, le=100, description="Number of results"),
+    api_key: str = require_api_key
+):
+    """Get tests that don't have a JIRA key assigned yet."""
+    try:
+        container = request.app.state.container
+        qdrant_client = container.get('qdrant_client')
+
+        # Query for tests where jiraKey is null or empty
+        # Note: Qdrant doesn't have a direct "is null" filter, so we'll get all and filter
+        results = qdrant_client.scroll(
+            collection_name=TEST_DOCS_COLLECTION,
+            limit=limit * 2,  # Get more since we'll filter
+            with_payload=True,
+            with_vectors=False
+        )
+
+        # Filter for tests without JIRA keys
+        tests_without_jira = []
+        for point in results[0]:
+            if not point.payload.get("jiraKey"):
+                test_data = point.payload
+                tests_without_jira.append(TestDoc(**test_data))
+                if len(tests_without_jira) >= limit:
+                    break
+
+        logger.info(
+            "Retrieved tests without JIRA keys",
+            count=len(tests_without_jira)
+        )
+
+        return tests_without_jira
+
+    except Exception as e:
+        logger.error(f"Get tests without JIRA error: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.get("/similar/{jira_key}")
@@ -759,7 +905,7 @@ async def find_similar(
                 error=str(e),
                 extra={"security_event": True}
             )
-            raise HTTPException(status_code=400, detail=f"Invalid JIRA key format: {str(e)}")
+            raise HTTPException(status_code=400, detail=f"Invalid JIRA key format: {str(e)}") from None
 
         # First get the test (call internal logic directly to avoid auth dependency)
         # Query by jiraKey
@@ -811,7 +957,7 @@ async def find_similar(
         raise
     except Exception as e:
         logger.error(f"Find similar error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 if __name__ == "__main__":

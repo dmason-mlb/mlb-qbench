@@ -7,6 +7,8 @@
 ehthumbs.db
 Thumbs.db
 *~
+testrail_ios_at_bat
+testrail_data.db
 
 # Python
 __pycache__/

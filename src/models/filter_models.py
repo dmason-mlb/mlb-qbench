@@ -1,37 +1,37 @@
 """Filter validation models for secure input sanitization."""
 
 import re
-from typing import Any, Dict, List, Optional, Union
 from enum import Enum
+from typing import Any, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class FilterableField(str, Enum):
     """Allowed filterable fields - whitelist approach for security."""
-    
+
     # Test metadata fields
     TEST_TYPE = "testType"
-    PRIORITY = "priority" 
+    PRIORITY = "priority"
     PLATFORMS = "platforms"
     TAGS = "tags"
     FOLDER_STRUCTURE = "folderStructure"
-    
+
     # JIRA related fields
     JIRA_KEY = "jiraKey"
-    
-    # Test execution fields  
+
+    # Test execution fields
     STATUS = "status"
-    
+
     # Date fields (if needed)
     INGESTED_AT = "ingested_at"
 
 
 class FilterOperator(str, Enum):
     """Allowed filter operators."""
-    
+
     EQUALS = "eq"
-    IN = "in" 
+    IN = "in"
     NOT_IN = "not_in"
     CONTAINS = "contains"
     STARTS_WITH = "starts_with"
@@ -41,11 +41,11 @@ class FilterOperator(str, Enum):
 
 class FilterValue(BaseModel):
     """A single filter value with validation."""
-    
+
     field: FilterableField = Field(..., description="Field to filter on")
     operator: FilterOperator = Field(FilterOperator.EQUALS, description="Filter operator")
-    value: Union[str, int, List[str], List[int]] = Field(..., description="Filter value")
-    
+    value: Union[str, int, list[str], list[int]] = Field(..., description="Filter value")
+
     @field_validator('value')
     @classmethod
     def validate_filter_value(cls, v: Any) -> Any:
@@ -60,19 +60,19 @@ class FilterValue(BaseModel):
             if re.search(r'[<>&"\']', v):
                 raise ValueError("Filter value contains potentially dangerous characters")
             return v.strip()
-        
+
         elif isinstance(v, int):
             # Validate integer ranges
             if v < -1000000 or v > 1000000:  # Reasonable bounds
                 raise ValueError("Integer filter value out of range")
             return v
-        
+
         elif isinstance(v, list):
             if len(v) == 0:
                 raise ValueError("Filter list cannot be empty")
             if len(v) > 50:  # Reasonable list size limit
                 raise ValueError("Filter list too long (max 50 items)")
-            
+
             # Validate each item in list
             validated_items = []
             for item in v:
@@ -90,21 +90,21 @@ class FilterValue(BaseModel):
                     validated_items.append(item)
                 else:
                     raise ValueError(f"Invalid filter list item type: {type(item)}")
-            
+
             if len(validated_items) == 0:
                 raise ValueError("Filter list has no valid items")
             return validated_items
-        
+
         else:
             raise ValueError(f"Invalid filter value type: {type(v)}")
-    
+
     @model_validator(mode='after')
     def validate_field_value_compatibility(self) -> 'FilterValue':
         """Validate that field and value types are compatible."""
         field = self.field
         value = self.value
         operator = self.operator
-        
+
         # Define expected types for each field
         string_fields = {
             FilterableField.TEST_TYPE,
@@ -113,12 +113,12 @@ class FilterValue(BaseModel):
             FilterableField.JIRA_KEY,
             FilterableField.STATUS
         }
-        
+
         list_fields = {
             FilterableField.PLATFORMS,
             FilterableField.TAGS
         }
-        
+
         # Validate field-value compatibility
         if field in string_fields:
             if operator in [FilterOperator.IN, FilterOperator.NOT_IN]:
@@ -127,7 +127,7 @@ class FilterValue(BaseModel):
             else:
                 if not isinstance(value, (str, int)):  # Allow int for priority field
                     raise ValueError(f"Field {field} requires string or int value")
-        
+
         elif field in list_fields:
             # List fields can be filtered with single values or lists
             if operator in [FilterOperator.EQUALS, FilterOperator.CONTAINS]:
@@ -136,41 +136,41 @@ class FilterValue(BaseModel):
             elif operator in [FilterOperator.IN, FilterOperator.NOT_IN]:
                 if not isinstance(value, list):
                     raise ValueError(f"Field {field} with operator {operator} requires list value")
-        
+
         # Additional JIRA key validation
         if field == FilterableField.JIRA_KEY and isinstance(value, str):
             jira_pattern = r'^[A-Z][A-Z0-9]*-\d+$'
             if not re.match(jira_pattern, value):
                 raise ValueError(f"Invalid JIRA key format: {value}")
-        
+
         return self
 
 
 class ValidatedFilters(BaseModel):
     """Container for validated filters."""
-    
-    filters: List[FilterValue] = Field(default_factory=list, description="List of validated filters")
-    
+
+    filters: list[FilterValue] = Field(default_factory=list, description="List of validated filters")
+
     @field_validator('filters')
-    @classmethod  
-    def validate_filter_count(cls, v: List[FilterValue]) -> List[FilterValue]:
+    @classmethod
+    def validate_filter_count(cls, v: list[FilterValue]) -> list[FilterValue]:
         """Validate filter count for DoS protection."""
         if len(v) > 20:  # Reasonable limit on number of filters
             raise ValueError("Too many filters (max 20)")
         return v
-    
-    def to_qdrant_filter_dict(self) -> Optional[Dict[str, Any]]:
+
+    def to_qdrant_filter_dict(self) -> Optional[dict[str, Any]]:
         """Convert validated filters to dictionary format for build_filter."""
         if not self.filters:
             return None
-        
+
         filter_dict = {}
-        
+
         for filter_value in self.filters:
             field = filter_value.field.value
             operator = filter_value.operator
             value = filter_value.value
-            
+
             # Handle different operators
             if operator == FilterOperator.EQUALS:
                 filter_dict[field] = value
@@ -181,67 +181,67 @@ class ValidatedFilters(BaseModel):
                 # For CONTAINS, we'll handle this in build_filter with special logic
                 filter_dict[f"{field}__contains"] = value
             # Add more operators as needed
-        
+
         return filter_dict if filter_dict else None
 
 
-def validate_and_sanitize_filters(filters: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def validate_and_sanitize_filters(filters: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
     """
     Validate and sanitize filter input.
-    
+
     Args:
         filters: Raw filter dictionary from user input
-        
+
     Returns:
         Sanitized filter dictionary safe for Qdrant operations
-        
+
     Raises:
         ValueError: If validation fails
     """
     if not filters:
         return None
-    
+
     try:
         # Convert old-style dict to new FilterValue format
         filter_values = []
-        
+
         for field_name, field_value in filters.items():
             # Determine operator and actual field name
             if field_name.endswith("__contains"):
                 actual_field_name = field_name.replace("__contains", "")
                 try:
                     filterable_field = FilterableField(actual_field_name)
-                except ValueError:
-                    raise ValueError(f"Invalid filter field: {actual_field_name}")
+                except ValueError as e:
+                    raise ValueError(f"Invalid filter field: {actual_field_name}") from e
                 operator = FilterOperator.CONTAINS
             else:
                 # Check if field is allowed
                 try:
                     filterable_field = FilterableField(field_name)
-                except ValueError:
-                    raise ValueError(f"Invalid filter field: {field_name}")
-                
+                except ValueError as e:
+                    raise ValueError(f"Invalid filter field: {field_name}") from e
+
                 # Determine operator based on value type
                 if isinstance(field_value, list):
                     operator = FilterOperator.IN
                 else:
                     operator = FilterOperator.EQUALS
-            
+
             # Create validated filter
             filter_values.append(FilterValue(
                 field=filterable_field,
                 operator=operator,
                 value=field_value
             ))
-        
+
         # Validate the complete filter set
         validated = ValidatedFilters(filters=filter_values)
-        
+
         # Return sanitized dictionary
         return validated.to_qdrant_filter_dict()
-        
+
     except Exception as e:
-        raise ValueError(f"Filter validation failed: {str(e)}")
+        raise ValueError(f"Filter validation failed: {str(e)}") from e
 
 
 # Priority validation patterns
@@ -256,12 +256,12 @@ def validate_priority_value(priority: str) -> str:
     return priority
 
 def validate_test_type_value(test_type: str) -> str:
-    """Validate test type value against allowed values.""" 
+    """Validate test type value against allowed values."""
     if test_type not in VALID_TEST_TYPES:
         raise ValueError(f"Invalid test type: {test_type}. Must be one of {VALID_TEST_TYPES}")
     return test_type
 
-def validate_platform_values(platforms: List[str]) -> List[str]:
+def validate_platform_values(platforms: list[str]) -> list[str]:
     """Validate platform values against allowed values."""
     for platform in platforms:
         if platform not in VALID_PLATFORMS:
