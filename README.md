@@ -332,29 +332,79 @@ The ingestion process automatically normalizes fields:
 ### Ingestion Commands
 
 ```bash
-# Ingest functional tests
+# Standard ingestion (concurrent - for small/medium datasets)
 python -m src.ingest.ingest_functional /path/to/functional_tests.json
-
-# Ingest API tests  
 python -m src.ingest.ingest_api /path/to/api_tests.json
-
-# Batch ingestion (if files exist in data/ directory)
 make ingest
 
-# Ingestion with custom embedder settings
+# Large-scale sequential ingestion (for 5,000+ documents)
+python ingest_sequential.py                    # Process all batches in data/ directory
+python ingest_all_testrail_improved.py         # Alternative with retry logic
+
+# Custom embedder settings
 EMBED_PROVIDER=openai python -m src.ingest.ingest_functional tests.json
 ```
 
-### Ingestion Process
+### Large-Scale Ingestion Monitoring
 
-The ingestion pipeline follows these steps:
+For large datasets requiring sequential processing:
+
+```bash
+# Start sequential ingestion in background
+nohup python ingest_sequential.py > ingestion.log 2>&1 &
+
+# Monitor progress (use the provided monitoring script)
+./monitor_ingestion.py
+
+# Check process status
+ps aux | grep "python ingest_sequential.py" | grep -v grep
+
+# View recent log entries
+tail -20 ingestion.log
+
+# Check collection health during ingestion
+python -c "
+from src.models.schema import check_collections_health
+health = check_collections_health()
+for name, info in health['collections'].items():
+    print(f'{name}: {info[\"status\"]} ({info[\"points_count\"]} points)')
+"
+```
+
+### Ingestion Strategies
+
+The system supports two ingestion approaches depending on dataset size and stability requirements:
+
+#### 1. Concurrent Ingestion (Default - Small to Medium Datasets)
+
+Optimized for datasets under 1,000 documents with high performance:
 
 1. **Validation**: JSON schema validation and security checks
 2. **Normalization**: Field mapping and data standardization  
-3. **Embedding**: Generate vectors for titles, descriptions, and steps
-4. **Batch Processing**: Process in batches of 25 documents for efficiency
-5. **Upsert**: Insert/update in Qdrant with idempotent operations
+3. **Batch Embedding**: Generate vectors concurrently in batches of 25 texts
+4. **Concurrent Processing**: Process multiple documents simultaneously
+5. **Batch Upsert**: Insert/update in Qdrant with idempotent operations
 6. **Verification**: Confirm successful ingestion and indexing
+
+**Performance**: ~25x faster through async batch processing
+
+#### 2. Sequential Ingestion (Large Datasets)
+
+Conservative approach for large datasets (5,000+ documents) to prevent Qdrant worker overload:
+
+1. **One-at-a-time Processing**: Sequential embedding generation to minimize load
+2. **Resource Management**: Health checks and controlled delays between batches
+3. **Corruption Prevention**: Avoids concurrent API calls that can overwhelm Qdrant workers
+4. **Progress Monitoring**: Built-in progress tracking and recovery mechanisms
+5. **Stability Focus**: Prioritizes data integrity over speed
+
+**When to Use Sequential**:
+- Large datasets (>5,000 documents)
+- Previous ingestion corruption issues
+- Resource-constrained environments
+- Mission-critical data requiring guaranteed integrity
+
+**Performance**: Slower but reliable (~1 embedding/second, 15-20 hours for 6,350 documents)
 
 ### Ingestion API Endpoint
 
@@ -371,14 +421,29 @@ curl -X POST "http://localhost:8000/ingest" \
 
 ### Performance Metrics
 
+#### Concurrent Ingestion (Small/Medium Datasets)
 - **Ingestion Speed**: ~25x faster with async batch processing
 - **Batch Size**: 25 documents per batch (configurable)
 - **Embedding Batching**: 25 texts per API call (configurable)  
-- **Rate Limiting**: 5 requests/minute for ingestion endpoint
 - **Memory Usage**: ~100MB per 1000 documents during ingestion
+- **Recommended For**: <1,000 documents
+
+#### Sequential Ingestion (Large Datasets)
+- **Ingestion Speed**: ~1 embedding per second (conservative)
+- **Processing**: One document at a time to prevent overload
+- **Batch Size**: 10 points per Qdrant upsert (with delays)
+- **Memory Usage**: ~50MB constant (minimal buffering)
+- **Recommended For**: >5,000 documents or after corruption issues
+- **Typical Duration**: 15-20 hours for 6,350 documents
+
+#### General Limits
+- **Rate Limiting**: 5 requests/minute for ingestion endpoint
+- **Health Checks**: Every 5 batches during sequential processing
+- **Recovery**: Automatic retry with exponential backoff
 
 ### Validation and Troubleshooting
 
+#### Pre-Ingestion Validation
 ```bash
 # Validate JSON format before ingestion
 python -c "
@@ -389,12 +454,55 @@ with open('your_tests.json') as f:
     print('Required fields present:', all('title' in test for test in data))
 "
 
-# Check ingestion logs
-tail -f logs/ingestion.log
+# Check collection health before starting large ingestion
+python -c "
+from src.models.schema import check_collections_health
+health = check_collections_health()
+print(f'Status: {health[\"status\"]}')
+for name, info in health['collections'].items():
+    print(f'{name}: {info[\"status\"]}')
+"
+```
 
-# Verify collection counts after ingestion
+#### Qdrant Corruption Recovery
+```bash
+# Signs of corruption: "channel closed" errors, red collection status
+# Recovery steps:
+make qdrant-down                              # Stop Qdrant
+rm -rf qdrant_storage                         # Clear corrupted data  
+mkdir qdrant_storage && chmod 755 qdrant_storage
+make qdrant-up                                # Restart fresh
+python -m src.models.schema                   # Recreate collections
+
+# Use sequential ingestion to prevent recurrence
+python ingest_sequential.py
+```
+
+#### During Large Ingestion
+```bash
+# Monitor active ingestion
+./monitor_ingestion.py                        # Custom progress monitor
+tail -f ingestion.log | grep -E "(✅|❌|Processing batch)"
+
+# Check for worker failures
+grep "channel closed" ingestion.log
+grep "Service internal error" ingestion.log
+
+# Verify collections stay healthy
+curl http://localhost:6533/collections/test_docs | jq '.result.status'
+curl http://localhost:6533/collections/test_steps | jq '.result.status'
+```
+
+#### Post-Ingestion Verification
+```bash
+# Verify final collection counts
 curl http://localhost:6533/collections/test_docs | jq '.result.points_count'
 curl http://localhost:6533/collections/test_steps | jq '.result.points_count'
+
+# Test search functionality
+curl -X POST "http://localhost:8000/search" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "test", "limit": 5}'
 ```
 
 ## API Usage
@@ -467,7 +575,7 @@ make qdrant-down                       # Stop Qdrant only
 
 ## AI Integration (MCP)
 
-The project includes a Model Context Protocol server for AI assistant integration:
+The project includes a Model Context Protocol server for AI assistant integration with 5 specialized tools for test discovery and management. See the full catalog and usage examples in [TOOLSET.md](docs/TOOLSET.md).
 
 ```bash
 # Start MCP server for AI tools
@@ -491,10 +599,13 @@ make mcp-server
 ## Performance Characteristics
 
 - **Search Latency**: Typically <100ms for hybrid search queries
-- **Ingestion Speed**: 25x improvement through async batch processing
+- **Ingestion Speed**: 
+  - Concurrent: ~25x improvement through async batch processing (small datasets)
+  - Sequential: ~1 embedding/second (large datasets, corruption-resistant)
 - **Memory Usage**: ~500MB RAM for 10k documents in Qdrant
 - **Concurrent Operations**: ~50% faster search through async processing
 - **Rate limits**: 60 requests/minute for search, 5/minute for ingestion
+- **Scalability**: Successfully tested with 6,350+ documents using sequential ingestion
 
 ## Testing
 

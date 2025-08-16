@@ -1,4 +1,49 @@
-"""Field harmonization utilities for normalizing test data."""
+"""Data normalization and harmonization engine for test format standardization.
+
+This module provides comprehensive data transformation capabilities to normalize
+test data from multiple formats (Xray functional, Xray API, legacy formats) into
+a standardized TestDoc schema. It handles field mapping, data type conversion,
+validation, and quality assurance for reliable test data ingestion.
+
+Normalization Features:
+    - Multi-format support: Xray functional, Xray API, legacy JSON formats
+    - Field mapping and harmonization: labels→tags, folder→folderStructure
+    - Data type normalization: string→list conversions, path standardization
+    - Priority standardization: numeric→text, case normalization
+    - UID generation and conflict resolution strategies
+    - Comprehensive validation with warning collection
+    - Batch processing with error isolation
+
+Format Support:
+    - Functional Tests: Xray export format with nested testInfo structure
+    - API Tests: Flat structure with testSteps array
+    - Legacy Tests: Mixed formats with backward compatibility
+    - Hybrid Tests: Flexible format detection and adaptation
+
+Data Quality Features:
+    - Field presence validation and default value assignment
+    - Data type consistency enforcement (strings, lists, integers)
+    - Cross-field relationship validation (UID uniqueness)
+    - Warning collection for data quality monitoring
+    - Error isolation prevents batch failures
+
+Dependencies:
+    - datetime: For timestamp generation and timezone handling
+    - structlog: For comprehensive validation and transformation logging
+    - src.models.test_models: For TestDoc and TestStep schema validation
+
+Used by:
+    - src.ingest.ingest_functional: For functional test data normalization
+    - src.ingest.ingest_api: For API test data normalization
+    - src.service.main: For real-time test data validation
+    - Testing frameworks: For test data setup and validation
+
+Complexity:
+    - Single test normalization: O(s) where s=number of steps
+    - Batch normalization: O(n*s) where n=tests, s=average steps per test
+    - Validation: O(f) where f=number of validation rules per test
+    - Priority mapping: O(1) dictionary lookup
+"""
 
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -11,29 +56,78 @@ logger = structlog.get_logger()
 
 
 def normalize_functional_test(raw_data: dict[str, Any]) -> Optional[TestDoc]:
-    """
-    Normalize functional test data to standard format.
-
-    Functional JSON structure (Xray format):
+    """Normalize functional test data to standardized TestDoc format with comprehensive field mapping.
+    
+    This function handles the complex Xray functional test format with nested testInfo structure,
+    multiple field aliases, and flexible step formats. It provides robust error handling and
+    data quality validation to ensure reliable test data normalization.
+    
+    Functional Test Format Support:
+        - Xray Export Format: Nested testInfo structure with metadata
+        - Legacy Formats: Flattened structure with testScript wrapper
+        - Hybrid Formats: Mixed field locations with fallback strategies
+        - Multi-alias Support: issueKey/jiraKey, result/expected field mapping
+        
+    Args:
+        raw_data: Raw functional test data dictionary from JSON source
+        
+    Returns:
+        Normalized TestDoc object if successful, None if normalization fails
+        
+    Field Mapping Strategy:
+        - UID Priority: jiraKey > issueKey > testId (first available wins)
+        - Step Structure: Xray steps > testScript.steps > root steps
+        - Description Sources: testInfo.description > objective field
+        - Label Mapping: testInfo.labels → TestDoc.tags (semantic conversion)
+        - Folder Mapping: folder → folderStructure (path normalization)
+        - Priority Normalization: Via normalize_priority() for consistency
+        
+    Data Transformations:
+        1. Nested Structure Flattening: testInfo → root level fields
+        2. Field Aliasing: Multiple names for same semantic field
+        3. Type Conversion: string preconditions → list format
+        4. Step Normalization: index assignment, action/data merging
+        5. List/String Conversion: Flexible input type handling
+        
+    Error Handling:
+        - Graceful degradation: Continues with partial data on field errors
+        - Missing UID Detection: Returns None for tests without identifiers
+        - Malformed Steps: Skips invalid steps, preserves valid ones
+        - Exception Isolation: Catches and logs errors without propagation
+        
+    Complexity: O(s) where s=number of test steps for step processing
+    
+    Functional Test JSON Structure (Xray Export Format):
     {
         "testInfo": {
-            "summary": "string",
-            "type": "Manual",
-            "priority": "string",
-            "labels": ["string"]
+            "summary": "Test Title",           # → title, summary
+            "description": "Test details",     # → description
+            "type": "Manual",                  # → testType
+            "priority": "High",                # → priority (normalized)
+            "labels": ["tag1", "tag2"]         # → tags
         },
-        "issueKey": "string",
-        "folder": "string",
-        "precondition": "string",
-        "objective": "string",
-        "steps": [
+        "issueKey": "PROJ-123",               # → jiraKey, uid (primary ID)
+        "folder": "Tests/Functional",          # → folderStructure
+        "precondition": "User logged in",      # → preconditions (string→list)
+        "objective": "Verify functionality",   # → description (fallback)
+        "steps": [                            # → steps (normalized)
             {
-                "index": 1,
-                "action": "string",
-                "data": "string",
-                "result": "string"
+                "index": 1,                   # → step.index
+                "action": "Click button",     # → step.action
+                "data": "testuser",           # → merged into action
+                "result": "Page loads"        # → step.expected (string→list)
             }
         ]
+    }
+    
+    Legacy Format Support (testScript wrapper):
+    {
+        "summary": "Test Title",              # Direct field mapping
+        "testScript": {
+            "steps": [...]                    # → steps extraction
+        },
+        "testType": "Manual",                 # Direct field mapping
+        "folder": "Tests"                     # → folderStructure
     }
     """
     try:
@@ -313,9 +407,9 @@ def validate_test_doc(test_doc: TestDoc) -> list[str]:
     if not test_doc.tags:
         warnings.append(f"Test {test_doc.uid} has no tags")
 
-    # Check for UID issues
-    if not test_doc.jiraKey and test_doc.testCaseId:
-        warnings.append(f"Test {test_doc.uid} using testCaseId as fallback (no jiraKey)")
+    # Check for identifier issues - testCaseId is primary, jiraKey is optional
+    if not test_doc.testCaseId and not test_doc.jiraKey:
+        warnings.append(f"Test {test_doc.uid} has no testCaseId or jiraKey identifier")
 
     return warnings
 

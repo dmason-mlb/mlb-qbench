@@ -1,0 +1,51 @@
+================================================================================
+CONSOLIDATION VALIDATION REPORT
+Generated: 2025-08-16T12:49:42.760717
+================================================================================
+
+OVERALL STATISTICS
+----------------------------------------
+Total Cases:          104,121
+Consolidated:         66,293
+Null Consolidated:    37,828
+Consolidation Rate:   63.67%
+
+STRUCTURE VALIDATION
+----------------------------------------
+Valid Structure:      100
+Invalid Structure:    0
+
+DATA PRESERVATION (Sample)
+----------------------------------------
+Data Preserved:       50
+Potential Data Loss:  0
+
+ISSUES FOUND
+----------------------------------------
+potential_data_loss                 1
+
+Sample Issues:
+  {'type': 'potential_data_loss', 'count': 120, 'description': 'Cases with original steps but no consolidated output'}
+
+SAMPLE VALIDATION DETAILS
+----------------------------------------
+Case 1279689:
+  Original fields: steps_separated, steps_combined
+  Preserved: True
+
+Case 32470:
+  Original fields: steps, steps_combined
+  Preserved: True
+
+Case 62688:
+  Original fields: steps, steps_combined
+  Preserved: True
+
+Case 28915547:
+  Original fields: steps_separated, steps_combined
+  Preserved: True
+
+Case 30640889:
+  Original fields: steps_separated
+  Preserved: True
+

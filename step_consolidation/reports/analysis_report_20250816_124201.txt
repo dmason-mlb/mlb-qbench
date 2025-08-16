@@ -1,0 +1,45 @@
+================================================================================
+TESTRAIL STEP FIELDS ANALYSIS REPORT
+Generated: 2025-08-16T12:42:01.397960
+================================================================================
+
+Database: /Users/douglas.mason/Documents/GitHub/mlb-qbench.worktrees/qbench-dev/step_consolidation/data/testrail_data_working.db
+Total Cases: 104,121
+
+FIELD PRESENCE (Sample Analysis)
+----------------------------------------
+steps                   489 (48.9%)
+steps_combined          572 (57.2%)
+steps_separated         159 (15.9%)
+
+FIELD COMBINATIONS
+----------------------------------------
+steps+steps_combined              436 (43.6%)
+no_fields                         383 (38.3%)
+steps_combined+steps_separated     61 (6.1%)
+steps+steps_combined+steps_separated     53 (5.3%)
+steps_separated                    45 (4.5%)
+steps_combined                     22 (2.2%)
+
+Cases with NO step fields: 383 (38.3%)
+
+SAMPLE JSON STRUCTURES (steps_separated)
+----------------------------------------
+Case 30675737:
+[
+  {
+    "content": "1. Launch PVNG application\r\n2. Select Event administration from the Ticketing setup menu and create two events.\r\n3. Select Package event list from Ticketing setup menu and create a Master only Package event list.\r\n4. Associate both the events to this Master Only Package Event list\r\n5. 1.Select Packages from Ticketing setup menu and create a new package.\n2.Associate Master only Package event list to this package.\r\n6. 1.Verify the price structure of Master only Pac...
+
+Case 31316282:
+[
+  {
+    "content": "1. Buy MMS Listed Tickets with Seller Credit False",
+    "expected": "1. Seller Credit not created"
+  }
+]...
+
+Case 30717812:
+[
+  {
+    "content": "1. \t\nPerform sale for the event using patron P1\r\n2. Run the below queries to check whether the tickets are added to Data mart\n\nselect t.event_id, t.seat_id, t.dw_last_updated_date, tf.ticket_id, tf.order_id, tf.activity_id, tf.created_date\nfrom ticket_fact tf, ticket_dim t where t.order_id = '' and t.ticket_id = tf.ticket_id order by tf.created_date desc;\n\nselect event_id, seat_id, is_available, last_updated_date, dw_last_updated_date from event_seat_fact where eve...
+
