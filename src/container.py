@@ -595,10 +595,10 @@ def configure_services() -> Container:
     function called during application initialization.
     
     Service Categories:
-        - Core Services: Qdrant client, embedder, rate limiter
+        - Core Services: PostgreSQL database, embedder, rate limiter
         - Validators: Path, JIRA, API key validation services
         - Ingestion: Functional and API test ingestion services
-        - Health: Collection health monitoring services
+        - Health: Database health monitoring services
     
     Dependency Strategy:
         - Heavyweight resources (databases, embedders) as singletons
@@ -628,13 +628,11 @@ def configure_services() -> Container:
 
     from .auth.auth import get_api_key
     from .embedder import get_embedder
-    from .ingest.ingest_api import ingest_api_tests
-    from .ingest.ingest_functional import ingest_functional_tests
-    from .models.schema import check_collections_health, get_client
+    from .db.postgres_vector import PostgresVectorDB
     from .security import validate_data_file_path, validate_jira_key
 
     # Register core services
-    container.register_singleton('qdrant_client', get_client)
+    container.register_singleton('database', lambda: PostgresVectorDB())
     container.register_singleton('embedder', get_embedder)
     container.register_singleton('rate_limiter', lambda: Limiter(key_func=get_remote_address))
 
@@ -642,13 +640,6 @@ def configure_services() -> Container:
     container.register_transient('path_validator', lambda: validate_data_file_path)
     container.register_transient('jira_validator', lambda: validate_jira_key)
     container.register_transient('api_key_validator', lambda: get_api_key)
-
-    # Register ingestion services (stateless, can be transient)
-    container.register_transient('functional_ingest', lambda: ingest_functional_tests)
-    container.register_transient('api_ingest', lambda: ingest_api_tests)
-
-    # Register health check service
-    container.register_transient('health_checker', lambda client: lambda: check_collections_health(client), ['qdrant_client'])
 
     logger.info("Service container configured successfully")
     return container
@@ -690,26 +681,26 @@ async def container_lifespan():
 
 
 # Service accessor functions for backward compatibility
-def get_qdrant_client():
-    """Get Qdrant vector database client from the global container.
+def get_database():
+    """Get PostgreSQL database instance from the global container.
     
-    Convenience function for accessing the singleton Qdrant client instance.
+    Convenience function for accessing the singleton PostgreSQL database instance.
     Provides backward compatibility and simplified access pattern.
     
     Returns:
-        QdrantClient: Configured Qdrant database client
+        PostgresVectorDB: Configured PostgreSQL database with pgvector
         
     Service Resolution:
-        Resolves 'qdrant_client' service from global container.
-        Client is configured with URL and timeout from environment.
+        Resolves 'database' service from global container.
+        Database is configured with connection pool and pgvector extension.
         
-    Performance: O(1) after initial client creation
+    Performance: O(1) after initial database creation
     
     Usage:
         Used throughout the application for vector database operations.
         Singleton pattern ensures connection pooling and resource efficiency.
     """
-    return get_container().get('qdrant_client')
+    return get_container().get('database')
 
 
 def get_embedder_service():
@@ -822,23 +813,3 @@ def get_api_key_validator():
     return get_container().get('api_key_validator')
 
 
-def get_health_checker():
-    """Get health monitoring service from the global container.
-    
-    Convenience function for accessing the health check service.
-    Monitors Qdrant collection status and service availability.
-    
-    Returns:
-        Callable: Health check function
-        
-    Service Resolution:
-        Resolves 'health_checker' service from global container.
-        Depends on qdrant_client for collection health monitoring.
-        
-    Performance: O(1) service resolution, O(c) health check where c = collections
-    
-    Monitoring:
-        Used by health endpoints and monitoring systems.
-        Provides detailed collection status and error reporting.
-    """
-    return get_container().get('health_checker')

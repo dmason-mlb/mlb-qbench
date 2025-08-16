@@ -64,20 +64,39 @@ fi
 
 echo "pgvector extension installed."
 
+# Set PATH for PostgreSQL commands
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    # macOS with Homebrew - PostgreSQL 15 is keg-only
+    export PATH="/opt/homebrew/opt/postgresql@15/bin:$PATH"
+fi
+
 # Create database and enable extension
 echo "Creating mlb_qbench database..."
 
-# Check if database exists
-if psql -U postgres -lqt | cut -d \| -f 1 | grep -qw mlb_qbench; then
-    echo "Database mlb_qbench already exists."
+# For macOS, use the current user (no postgres user)
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    # Check if database exists
+    if psql -lqt | cut -d \| -f 1 | grep -qw mlb_qbench; then
+        echo "Database mlb_qbench already exists."
+    else
+        createdb mlb_qbench
+        echo "Database mlb_qbench created."
+    fi
+    
+    # Enable pgvector extension
+    psql -d mlb_qbench -c "CREATE EXTENSION IF NOT EXISTS vector;"
 else
-    createdb -U postgres mlb_qbench || sudo -u postgres createdb mlb_qbench
-    echo "Database mlb_qbench created."
-fi
-
-# Enable pgvector extension
-psql -U postgres -d mlb_qbench -c "CREATE EXTENSION IF NOT EXISTS vector;" || \
+    # Linux - use postgres user
+    if sudo -u postgres psql -lqt | cut -d \| -f 1 | grep -qw mlb_qbench; then
+        echo "Database mlb_qbench already exists."
+    else
+        sudo -u postgres createdb mlb_qbench
+        echo "Database mlb_qbench created."
+    fi
+    
+    # Enable pgvector extension
     sudo -u postgres psql -d mlb_qbench -c "CREATE EXTENSION IF NOT EXISTS vector;"
+fi
 
 echo "pgvector extension enabled."
 
@@ -100,23 +119,41 @@ ALTER SYSTEM SET max_parallel_maintenance_workers = 4;
 SELECT pg_reload_conf();
 EOF
 
-psql -U postgres -d mlb_qbench -f /tmp/pgvector_config.sql || \
+# For macOS, use current user
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    psql -d mlb_qbench -f /tmp/pgvector_config.sql
+else
     sudo -u postgres psql -d mlb_qbench -f /tmp/pgvector_config.sql
+fi
 
 echo "PostgreSQL configuration optimized."
 
 # Test pgvector functionality
 echo "Testing pgvector functionality..."
 
-psql -U postgres -d mlb_qbench -c "SELECT vector_version();" || \
+# For macOS, use current user
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    psql -d mlb_qbench -c "SELECT vector_version();"
+else
     sudo -u postgres psql -d mlb_qbench -c "SELECT vector_version();"
+fi
 
 echo
 echo "=== Setup Complete ==="
 echo "Database: mlb_qbench"
 echo "Extension: pgvector"
-echo "Connection string: postgresql://postgres@localhost/mlb_qbench"
-echo
-echo "Next steps:"
-echo "1. Run: make db-schema   # To create tables and indexes"
-echo "2. Update .env with DATABASE_URL=postgresql://postgres@localhost/mlb_qbench"
+
+# Different connection strings for macOS vs Linux
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    echo "Connection string: postgresql://$(whoami)@localhost/mlb_qbench"
+    echo
+    echo "Next steps:"
+    echo "1. Run: make postgres-schema   # To create tables and indexes"
+    echo "2. Update .env with DATABASE_URL=postgresql://$(whoami)@localhost/mlb_qbench"
+else
+    echo "Connection string: postgresql://postgres@localhost/mlb_qbench"
+    echo
+    echo "Next steps:"
+    echo "1. Run: make postgres-schema   # To create tables and indexes"
+    echo "2. Update .env with DATABASE_URL=postgresql://postgres@localhost/mlb_qbench"
+fi

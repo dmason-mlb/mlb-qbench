@@ -136,8 +136,15 @@ class PostgresVectorDB:
                             # Convert embedding to PostgreSQL array format
                             embedding_str = '[' + ','.join(map(str, embedding)) + ']'
                             
+                            # Handle optional customFields attribute
+                            custom_fields = getattr(doc, 'customFields', None)
+                            custom_fields_json = json.dumps(custom_fields) if custom_fields else json.dumps({})
+                            
+                            # Convert testCaseId to int if it's a string
+                            test_case_id = int(doc.testCaseId) if isinstance(doc.testCaseId, str) else doc.testCaseId
+                            
                             copy_data.append((
-                                doc.testCaseId,
+                                test_case_id,
                                 doc.uid,
                                 doc.jiraKey,
                                 doc.title,
@@ -157,21 +164,23 @@ class PostgresVectorDB:
                                 datetime.now(),  # updated_at
                                 False,  # is_automated
                                 None,  # refs
-                                json.dumps({}) if not doc.customFields else json.dumps(doc.customFields)
+                                custom_fields_json
                             ))
                         
-                        # Use COPY for bulk insert
-                        await conn.copy_records_to_table(
-                            'test_documents',
-                            records=copy_data,
-                            columns=[
-                                'test_case_id', 'uid', 'jira_key', 'title', 'description',
-                                'summary', 'embedding', 'test_type', 'priority', 'platforms',
-                                'tags', 'folder_structure', 'suite_id', 'section_id',
-                                'project_id', 'source', 'ingested_at', 'updated_at',
-                                'is_automated', 'refs', 'custom_fields'
-                            ]
-                        )
+                        # Use individual inserts for now (COPY has issues with vector type)
+                        for data in copy_data:
+                            await conn.execute("""
+                                INSERT INTO test_documents (
+                                    test_case_id, uid, jira_key, title, description,
+                                    summary, embedding, test_type, priority, platforms,
+                                    tags, folder_structure, suite_id, section_id,
+                                    project_id, source, ingested_at, updated_at,
+                                    is_automated, refs, custom_fields
+                                ) VALUES (
+                                    $1, $2, $3, $4, $5, $6, $7::vector, $8, $9, $10,
+                                    $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21::jsonb
+                                )
+                            """, *data)
                         
                         # Insert steps for each document
                         for doc in batch:
@@ -198,14 +207,13 @@ class PostgresVectorDB:
                                     ))
                                 
                                 if step_data:
-                                    await conn.copy_records_to_table(
-                                        'test_steps',
-                                        records=step_data,
-                                        columns=[
-                                            'test_document_id', 'step_index', 'action',
-                                            'expected', 'data', 'embedding'
-                                        ]
-                                    )
+                                    for step_record in step_data:
+                                        await conn.execute("""
+                                            INSERT INTO test_steps (
+                                                test_document_id, step_index, action,
+                                                expected, data, embedding
+                                            ) VALUES ($1, $2, $3, $4, $5, $6::vector)
+                                        """, *step_record)
                         
                         inserted += len(batch)
                         logger.info(f"Inserted batch", 
@@ -247,8 +255,15 @@ class PostgresVectorDB:
         """
         filters = filters or {}
         
-        # Convert numpy array to PostgreSQL vector format
-        embedding_str = '[' + ','.join(map(str, query_embedding.tolist())) + ']'
+        # Convert embedding to PostgreSQL vector format
+        if isinstance(query_embedding, np.ndarray):
+            embedding_list = query_embedding.tolist()
+        elif isinstance(query_embedding, list):
+            embedding_list = query_embedding
+        else:
+            raise ValueError(f"Unexpected embedding type: {type(query_embedding)}")
+            
+        embedding_str = '[' + ','.join(map(str, embedding_list)) + ']'
         
         # Build the query dynamically based on filters
         query = """

@@ -96,10 +96,8 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
-# Qdrant
-qdrant_storage/
-qdrant_data/
-*.qdrant
+# PostgreSQL data directories (if stored locally)
+postgres_data/
 
 # Docker
 docker-compose.override.yml

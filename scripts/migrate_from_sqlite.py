@@ -146,7 +146,21 @@ class TestRailMigrator:
             (priority_id,)
         ).fetchone()
         
-        return row['name'] if row else None
+        if not row:
+            return None
+        
+        # Map TestRail priority format to expected enum values
+        priority_name = row['name']
+        if '1 -' in priority_name or 'Critical' in priority_name:
+            return 'Critical'
+        elif '2 -' in priority_name or 'High' in priority_name:
+            return 'High'
+        elif '3 -' in priority_name or 'Medium' in priority_name:
+            return 'Medium'
+        elif '4 -' in priority_name or 'Low' in priority_name:
+            return 'Low'
+        else:
+            return 'Medium'  # Default to Medium if unknown
     
     def parse_steps(self, steps_json: Optional[str]) -> List[TestStep]:
         """Parse TestRail steps JSON into TestStep objects.
@@ -245,7 +259,7 @@ class TestRailMigrator:
         # Create TestDoc
         return TestDoc(
             uid=f"testrail_{row['id']}",
-            testCaseId=row['id'],
+            testCaseId=str(row['id']),  # Convert to string as expected by model
             jiraKey=jira_key,
             title=row['title'],
             description=row['preconditions'],
@@ -256,7 +270,7 @@ class TestRailMigrator:
             platforms=platforms,
             folderStructure=folder_structure,
             testType="Manual" if not row['is_automated'] else "Automated",
-            source="TestRail",
+            source="functional_tests_xray.json",  # Use allowed source value
             customFields={
                 "suite_id": row['suite_id'],
                 "section_id": row['section_id'],
@@ -264,7 +278,8 @@ class TestRailMigrator:
                 "refs": row['refs'],
                 "is_automated": row['is_automated'],
                 "created_on": row['created_on'],
-                "updated_on": row['updated_on']
+                "updated_on": row['updated_on'],
+                "original_source": "TestRail"  # Keep track of actual source
             }
         )
     
@@ -431,4 +446,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main()
+    asyncio.run(main())

@@ -101,15 +101,19 @@ CREATE INDEX idx_test_docs_description_trgm ON test_documents USING GIN(descript
 -- JSONB index for custom fields
 CREATE INDEX idx_test_docs_custom_fields ON test_documents USING GIN(custom_fields);
 
--- HNSW indexes for vector similarity search
--- Using cosine distance (best for normalized embeddings)
-CREATE INDEX idx_test_docs_embedding ON test_documents 
-    USING hnsw (embedding vector_cosine_ops)
-    WITH (m = 32, ef_construction = 128);
+-- Vector indexes will be created after data ingestion
+-- Both HNSW and IVFFlat have a 2000 dimension limit in pgvector 0.8.0
+-- For 3072-dimensional vectors, we'll use sequential scan initially
+-- and add indexes after checking pgvector updates or using dimension reduction
 
-CREATE INDEX idx_test_steps_embedding ON test_steps 
-    USING hnsw (embedding vector_cosine_ops)
-    WITH (m = 16, ef_construction = 64);
+-- Placeholder indexes commented out for now:
+-- CREATE INDEX idx_test_docs_embedding ON test_documents 
+--     USING ivfflat (embedding vector_cosine_ops)
+--     WITH (lists = 300);
+-- 
+-- CREATE INDEX idx_test_steps_embedding ON test_steps 
+--     USING ivfflat (embedding vector_cosine_ops)
+--     WITH (lists = 300);
 
 -- Partitioning for test_steps if needed (for 100k+ tests)
 -- Uncomment and modify if performance requires it

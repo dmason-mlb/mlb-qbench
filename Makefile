@@ -20,14 +20,18 @@ postgres-schema: ## Create PostgreSQL schema and indexes
 	@echo "Creating PostgreSQL schema..."
 	psql -U postgres -d mlb_qbench -f sql/create_schema.sql
 
-migrate-test: ## Test migration with 1000 records
-	@echo "Running test migration (1000 records)..."
-	python scripts/migrate_from_sqlite.py --limit 1000
+migrate-test: ## Test migration with 100 records
+	@echo "Running test migration (100 records)..."
+	python scripts/migrate_from_sqlite.py --limit 100
 
-migrate-full: ## Run full migration of all test cases
-	@echo "Running full migration (104k+ records)..."
-	@echo "This will take some time and use OpenAI API quota..."
-	python scripts/migrate_from_sqlite.py
+migrate-full: ## Run full migration of all 104k test cases
+	@echo "Running full migration (104,121 records)..."
+	@echo "This will take 2-4 hours and use OpenAI API quota..."
+	./scripts/run_full_migration.sh
+
+migrate-resume: ## Resume migration from a specific test ID
+	@read -p "Enter the test ID to resume from: " resume_id; \
+	python scripts/migrate_from_sqlite.py --resume-from $$resume_id
 
 postgres-clean: ## Drop and recreate PostgreSQL database
 	@echo "Dropping and recreating database..."
@@ -47,7 +51,6 @@ stop: ## Stop all services
 	@pkill -f "uvicorn main:app" || true
 
 clean: stop ## Stop services and clean data
-	rm -rf qdrant_storage
 	rm -rf .pytest_cache
 	rm -rf .coverage
 	rm -rf htmlcov
@@ -75,18 +78,12 @@ format: ## Format code with black
 	black src/ tests/
 	ruff check --fix src/ tests/
 
-qdrant-up: ## Start only Qdrant
-	docker-compose up -d qdrant
-
-qdrant-down: ## Stop only Qdrant
-	docker-compose stop qdrant
-
-api-dev: ## Start only API server (assumes Qdrant is running)
+api-dev: ## Start API server
 	uvicorn src.service.main:app --reload --host 0.0.0.0 --port 8000
 
 check-env: ## Verify environment variables
 	@python -c "from dotenv import load_dotenv; load_dotenv(); import os; print('EMBED_PROVIDER:', os.getenv('EMBED_PROVIDER', 'NOT SET'))"
-	@python -c "from dotenv import load_dotenv; load_dotenv(); import os; print('QDRANT_URL:', os.getenv('QDRANT_URL', 'NOT SET'))"
+	@python -c "from dotenv import load_dotenv; load_dotenv(); import os; print('DATABASE_URL:', os.getenv('DATABASE_URL', 'NOT SET'))"
 
 mcp-server: ## Run MCP server for AI integration
 	@echo "Starting MCP server..."

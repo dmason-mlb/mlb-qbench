@@ -33,7 +33,7 @@ async def test_setup():
     # Create a test document
     test_doc = TestDoc(
         uid="test_001",
-        testCaseId=1,
+        testCaseId="1",  # String, not int
         jiraKey="TEST-123",
         title="Sample Test Case",
         description="This is a test case for verifying PostgreSQL setup",
@@ -46,7 +46,7 @@ async def test_setup():
         platforms=["web", "mobile"],
         folderStructure="/Tests/Smoke",
         testType="Manual",
-        source="Test"
+        source="functional_tests_xray.json"  # Must be one of the allowed values
     )
     
     # Insert test document
