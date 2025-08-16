@@ -1,4 +1,5 @@
 .PHONY: help dev stop clean test ingest search lint format install
+.PHONY: postgres-setup postgres-schema migrate-test migrate-full postgres-clean
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'
@@ -10,13 +11,35 @@ install: ## Install Python dependencies
 	pip install -e .
 	pip install -e ".[dev]"
 
-dev: ## Start Qdrant and API server for development
-	@echo "Starting Qdrant..."
-	docker-compose up -d
-	@echo "Waiting for Qdrant to be ready..."
-	@sleep 5
-	@echo "Starting API server..."
-	@echo "Note: Set MASTER_API_KEY and API_KEYS in .env for authentication"
+# PostgreSQL targets
+postgres-setup: ## Set up PostgreSQL with pgvector extension
+	@echo "Setting up PostgreSQL with pgvector..."
+	./scripts/setup_postgres.sh
+
+postgres-schema: ## Create PostgreSQL schema and indexes
+	@echo "Creating PostgreSQL schema..."
+	psql -U postgres -d mlb_qbench -f sql/create_schema.sql
+
+migrate-test: ## Test migration with 1000 records
+	@echo "Running test migration (1000 records)..."
+	python scripts/migrate_from_sqlite.py --limit 1000
+
+migrate-full: ## Run full migration of all test cases
+	@echo "Running full migration (104k+ records)..."
+	@echo "This will take some time and use OpenAI API quota..."
+	python scripts/migrate_from_sqlite.py
+
+postgres-clean: ## Drop and recreate PostgreSQL database
+	@echo "Dropping and recreating database..."
+	dropdb -U postgres mlb_qbench --if-exists
+	createdb -U postgres mlb_qbench
+	psql -U postgres -d mlb_qbench -c "CREATE EXTENSION vector;"
+	make postgres-schema
+
+# API development
+dev: ## Start API server with PostgreSQL
+	@echo "Starting API server with PostgreSQL..."
+	@echo "Note: Set DATABASE_URL, EMBED_PROVIDER, and API keys in .env"
 	uvicorn src.service.main:app --reload --host 0.0.0.0 --port 8000
 
 stop: ## Stop all services
