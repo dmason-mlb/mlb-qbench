@@ -7,6 +7,8 @@
 ehthumbs.db
 Thumbs.db
 *~
+testrail_ios_at_bat
+testrail_data.db
 
 # Python
 __pycache__/
@@ -94,10 +96,8 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
-# Qdrant
-qdrant_storage/
-qdrant_data/
-*.qdrant
+# PostgreSQL data directories (if stored locally)
+postgres_data/
 
 # Docker
 docker-compose.override.yml
@@ -193,3 +193,9 @@ test-reports/
 *.tmp
 *.temp
 .~*
+
+# Migration temporary files
+migration_checkpoint.json
+*_test_ids.txt
+migration_*.json
+.env.backup.*

@@ -1,0 +1,41 @@
+================================================================================
+DEEP PATTERN ANALYSIS REPORT
+Generated: 2025-08-16T12:44:13.706754
+================================================================================
+
+JSON STRUCTURE PATTERNS (steps_separated)
+----------------------------------------
+array                                                 500
+keys:('content', 'expected')                          500
+standard_structure                                    500
+
+FIELD LENGTH STATISTICS
+----------------------------------------
+json_array_length    Avg:        2 Max:       47 Min:        1
+steps                Avg:      191 Max:     3874 Min:       13
+steps_combined       Avg:      525 Max:    41276 Min:       12
+
+GIVEN/WHEN/THEN PATTERN DISTRIBUTION
+----------------------------------------
+steps_when                   293 cases
+combined_given               310 cases
+combined_when                304 cases
+combined_then                293 cases
+steps_given                   15 cases
+separated_when               291 cases
+separated_then               284 cases
+steps_then                    10 cases
+separated_given                8 cases
+
+EDGE CASES
+----------------------------------------
+very_long_content                  69
+encoding_issues                   100
+
+HTML CONTENT FOUND: 11 cases
+  steps                     3
+  steps_combined            8
+
+EMPTY BUT NOT NULL: 5 cases
+  steps                     2
+  steps_combined            3

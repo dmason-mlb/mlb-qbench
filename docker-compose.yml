@@ -1,19 +1,21 @@
 services:
-  qdrant:
-    image: qdrant/qdrant:latest
-    container_name: mlb-qbench-qdrant
+  postgres:
+    image: pgvector/pgvector:pg15-latest
+    container_name: mlb-qbench-postgres
     ports:
-      - "6533:6333"  # REST API (internal 6333 -> external 6533)
-      - "6534:6334"  # gRPC (internal 6334 -> external 6534)
+      - "5432:5432"
     volumes:
-      - ./qdrant_storage:/qdrant/storage
+      - ./postgres_data:/var/lib/postgresql/data
     environment:
-      - QDRANT__LOG_LEVEL=INFO
+      - POSTGRES_DB=mlb_qbench
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_HOST_AUTH_METHOD=trust
     networks:
       - mlb-qbench-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 30s
       timeout: 10s
       retries: 3

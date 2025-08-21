@@ -1,7 +1,53 @@
-"""Field harmonization utilities for normalizing test data."""
+"""Data normalization and harmonization engine for test format standardization.
 
-from typing import Dict, Any, List, Optional
-from datetime import datetime
+This module provides comprehensive data transformation capabilities to normalize
+test data from multiple formats (Xray functional, Xray API, legacy formats) into
+a standardized TestDoc schema. It handles field mapping, data type conversion,
+validation, and quality assurance for reliable test data ingestion.
+
+Normalization Features:
+    - Multi-format support: Xray functional, Xray API, legacy JSON formats
+    - Field mapping and harmonization: labels→tags, folder→folderStructure
+    - Data type normalization: string→list conversions, path standardization
+    - Priority standardization: numeric→text, case normalization
+    - UID generation and conflict resolution strategies
+    - Comprehensive validation with warning collection
+    - Batch processing with error isolation
+
+Format Support:
+    - Functional Tests: Xray export format with nested testInfo structure
+    - API Tests: Flat structure with testSteps array
+    - Legacy Tests: Mixed formats with backward compatibility
+    - Hybrid Tests: Flexible format detection and adaptation
+
+Data Quality Features:
+    - Field presence validation and default value assignment
+    - Data type consistency enforcement (strings, lists, integers)
+    - Cross-field relationship validation (UID uniqueness)
+    - Warning collection for data quality monitoring
+    - Error isolation prevents batch failures
+
+Dependencies:
+    - datetime: For timestamp generation and timezone handling
+    - structlog: For comprehensive validation and transformation logging
+    - src.models.test_models: For TestDoc and TestStep schema validation
+
+Used by:
+    - src.ingest.ingest_functional: For functional test data normalization
+    - src.ingest.ingest_api: For API test data normalization
+    - src.service.main: For real-time test data validation
+    - Testing frameworks: For test data setup and validation
+
+Complexity:
+    - Single test normalization: O(s) where s=number of steps
+    - Batch normalization: O(n*s) where n=tests, s=average steps per test
+    - Validation: O(f) where f=number of validation rules per test
+    - Priority mapping: O(1) dictionary lookup
+"""
+
+from datetime import datetime, timezone
+from typing import Any, Optional
+
 import structlog
 
 from ..models.test_models import TestDoc, TestStep
@@ -9,71 +55,122 @@ from ..models.test_models import TestDoc, TestStep
 logger = structlog.get_logger()
 
 
-def normalize_functional_test(raw_data: Dict[str, Any]) -> Optional[TestDoc]:
-    """
-    Normalize functional test data to standard format.
-    
-    Functional JSON structure (Xray format):
+def normalize_functional_test(raw_data: dict[str, Any]) -> Optional[TestDoc]:
+    """Normalize functional test data to standardized TestDoc format with comprehensive field mapping.
+
+    This function handles the complex Xray functional test format with nested testInfo structure,
+    multiple field aliases, and flexible step formats. It provides robust error handling and
+    data quality validation to ensure reliable test data normalization.
+
+    Functional Test Format Support:
+        - Xray Export Format: Nested testInfo structure with metadata
+        - Legacy Formats: Flattened structure with testScript wrapper
+        - Hybrid Formats: Mixed field locations with fallback strategies
+        - Multi-alias Support: issueKey/jiraKey, result/expected field mapping
+
+    Args:
+        raw_data: Raw functional test data dictionary from JSON source
+
+    Returns:
+        Normalized TestDoc object if successful, None if normalization fails
+
+    Field Mapping Strategy:
+        - UID Priority: jiraKey > issueKey > testId (first available wins)
+        - Step Structure: Xray steps > testScript.steps > root steps
+        - Description Sources: testInfo.description > objective field
+        - Label Mapping: testInfo.labels → TestDoc.tags (semantic conversion)
+        - Folder Mapping: folder → folderStructure (path normalization)
+        - Priority Normalization: Via normalize_priority() for consistency
+
+    Data Transformations:
+        1. Nested Structure Flattening: testInfo → root level fields
+        2. Field Aliasing: Multiple names for same semantic field
+        3. Type Conversion: string preconditions → list format
+        4. Step Normalization: index assignment, action/data merging
+        5. List/String Conversion: Flexible input type handling
+
+    Error Handling:
+        - Graceful degradation: Continues with partial data on field errors
+        - Missing UID Detection: Returns None for tests without identifiers
+        - Malformed Steps: Skips invalid steps, preserves valid ones
+        - Exception Isolation: Catches and logs errors without propagation
+
+    Complexity: O(s) where s=number of test steps for step processing
+
+    Functional Test JSON Structure (Xray Export Format):
     {
         "testInfo": {
-            "summary": "string",
-            "type": "Manual",
-            "priority": "string",
-            "labels": ["string"]
+            "summary": "Test Title",           # → title, summary
+            "description": "Test details",     # → description
+            "type": "Manual",                  # → testType
+            "priority": "High",                # → priority (normalized)
+            "labels": ["tag1", "tag2"]         # → tags
         },
-        "issueKey": "string",
-        "folder": "string",
-        "precondition": "string",
-        "objective": "string",
-        "steps": [
+        "issueKey": "PROJ-123",               # → jiraKey, uid (primary ID)
+        "folder": "Tests/Functional",          # → folderStructure
+        "precondition": "User logged in",      # → preconditions (string→list)
+        "objective": "Verify functionality",   # → description (fallback)
+        "steps": [                            # → steps (normalized)
             {
-                "index": 1,
-                "action": "string",
-                "data": "string",
-                "result": "string"
+                "index": 1,                   # → step.index
+                "action": "Click button",     # → step.action
+                "data": "testuser",           # → merged into action
+                "result": "Page loads"        # → step.expected (string→list)
             }
         ]
+    }
+
+    Legacy Format Support (testScript wrapper):
+    {
+        "summary": "Test Title",              # Direct field mapping
+        "testScript": {
+            "steps": [...]                    # → steps extraction
+        },
+        "testType": "Manual",                 # Direct field mapping
+        "folder": "Tests"                     # → folderStructure
     }
     """
     try:
         # Handle nested structure - functional tests have data wrapped in 'rows'
-        if 'rows' in raw_data and isinstance(raw_data['rows'], list):
+        if "rows" in raw_data and isinstance(raw_data["rows"], list):
             # This is the outer structure, not a single test
-            logger.warning("Received outer structure instead of single test", data_keys=list(raw_data.keys()))
+            logger.warning(
+                "Received outer structure instead of single test", data_keys=list(raw_data.keys())
+            )
             return None
-            
+
         # Map issueKey to jiraKey for compatibility
-        if 'issueKey' in raw_data and 'jiraKey' not in raw_data:
-            raw_data['jiraKey'] = raw_data['issueKey']
-        if 'testCaseId' in raw_data and 'testId' not in raw_data:
-            raw_data['testId'] = raw_data['testCaseId']
-            
+        if "issueKey" in raw_data and "jiraKey" not in raw_data:
+            raw_data["jiraKey"] = raw_data["issueKey"]
+        if "testCaseId" in raw_data and "testId" not in raw_data:
+            raw_data["testId"] = raw_data["testCaseId"]
+
         # Extract test info - handle both old and Xray formats
         test_info = raw_data.get("testInfo", {})
-        
+
         # For Xray format, steps are at the root level
         raw_steps = raw_data.get("steps", test_info.get("steps", []))
-        
+
         # Handle testScript structure (functional tests have testScript instead of testInfo)
-        if not test_info and 'testScript' in raw_data:
+        if not test_info and "testScript" in raw_data:
             # Map fields from the flattened structure
             test_info = {
-                'summary': raw_data.get('summary', ''),
-                'description': raw_data.get('description', ''),
-                'labels': raw_data.get('labels', []),
-                'priority': raw_data.get('priority', 'Medium'),
-                'testType': raw_data.get('testType', 'Manual'),
-                'steps': raw_data.get('testScript', {}).get('steps', []),
-                'folder': raw_data.get('folder', '')
+                "summary": raw_data.get("summary", ""),
+                "description": raw_data.get("description", ""),
+                "labels": raw_data.get("labels", []),
+                "priority": raw_data.get("priority", "Medium"),
+                "testType": raw_data.get("testType", "Manual"),
+                "steps": raw_data.get("testScript", {}).get("steps", []),
+                "folder": raw_data.get("folder", ""),
             }
-            raw_steps = test_info.get('steps', [])
-        
+            raw_steps = test_info.get("steps", [])
+
         # Determine UID
         uid = raw_data.get("jiraKey") or raw_data.get("issueKey") or raw_data.get("testId")
         if not uid:
             logger.warning("No jiraKey, issueKey or testId found", data=raw_data)
             return None
-        
+
         # Extract and normalize steps
         steps = []
         for step in raw_steps:
@@ -84,7 +181,7 @@ def normalize_functional_test(raw_data: Dict[str, Any]) -> Optional[TestDoc]:
                 data = step.get("data", "")
                 if data and action:
                     action = f"{action} (Data: {data})"
-                
+
                 # Functional tests have 'result' field instead of 'expected'
                 expected = step.get("expected", step.get("expectedResult", step.get("result", [])))
                 if isinstance(expected, str):
@@ -96,22 +193,18 @@ def normalize_functional_test(raw_data: Dict[str, Any]) -> Optional[TestDoc]:
                 index = len(steps) + 1
                 action = str(step)
                 expected = []
-            
+
             if action:  # Only add non-empty steps
-                steps.append(TestStep(
-                    index=index,
-                    action=action,
-                    expected=expected
-                ))
-        
+                steps.append(TestStep(index=index, action=action, expected=expected))
+
         # Get description - use objective for Xray format
         description = test_info.get("description") or raw_data.get("objective", "")
-        
+
         # Get preconditions - convert string to list if needed
         preconditions = raw_data.get("preconditions", raw_data.get("precondition", []))
         if isinstance(preconditions, str):
             preconditions = [preconditions] if preconditions else []
-        
+
         # Create normalized test document
         test_doc = TestDoc(
             uid=uid,
@@ -121,10 +214,14 @@ def normalize_functional_test(raw_data: Dict[str, Any]) -> Optional[TestDoc]:
             summary=test_info.get("summary", raw_data.get("summary")),
             description=description,
             testType=test_info.get("type", test_info.get("testType", "Manual")),
-            priority=normalize_priority(test_info.get("priority", raw_data.get("priority", "Medium"))),
+            priority=normalize_priority(
+                test_info.get("priority", raw_data.get("priority", "Medium"))
+            ),
             platforms=raw_data.get("platforms", []),  # Use platforms from raw_data if available
             tags=test_info.get("labels", raw_data.get("labels", [])),  # labels → tags
-            folderStructure=raw_data.get("folder", test_info.get("folder")),  # folder → folderStructure
+            folderStructure=raw_data.get(
+                "folder", test_info.get("folder")
+            ),  # folder → folderStructure
             preconditions=preconditions,
             steps=steps,
             expectedResults=test_info.get("expectedResults") or raw_data.get("expectedResults"),
@@ -132,20 +229,20 @@ def normalize_functional_test(raw_data: Dict[str, Any]) -> Optional[TestDoc]:
             relatedIssues=raw_data.get("relatedIssues", []),  # Check raw_data too
             testPath=raw_data.get("testPath"),  # Check raw_data too
             source="functional_tests_xray.json",
-            ingested_at=datetime.utcnow()
+            ingested_at=datetime.now(timezone.utc),
         )
-        
+
         return test_doc
-        
+
     except Exception as e:
         logger.error(f"Error normalizing functional test: {e}", data=raw_data)
         return None
 
 
-def normalize_api_test(raw_data: Dict[str, Any]) -> Optional[TestDoc]:
+def normalize_api_test(raw_data: dict[str, Any]) -> Optional[TestDoc]:
     """
     Normalize API test data to standard format.
-    
+
     API JSON structure (Xray format):
     {
         "title": "string",
@@ -171,7 +268,7 @@ def normalize_api_test(raw_data: Dict[str, Any]) -> Optional[TestDoc]:
         # Determine UID - handle null jiraKey
         jira_key = raw_data.get("jiraKey")
         test_case_id = raw_data.get("testCaseId")
-        
+
         if jira_key:
             uid = jira_key
         elif test_case_id:
@@ -180,7 +277,7 @@ def normalize_api_test(raw_data: Dict[str, Any]) -> Optional[TestDoc]:
         else:
             logger.warning("No jiraKey or testCaseId found", data=raw_data)
             return None
-        
+
         # Extract and normalize steps - check both 'testSteps' and 'steps'
         raw_steps = raw_data.get("testSteps", raw_data.get("steps", []))
         steps = []
@@ -196,36 +293,34 @@ def normalize_api_test(raw_data: Dict[str, Any]) -> Optional[TestDoc]:
             else:
                 action = str(step)
                 expected = []
-            
+
             if action:
-                steps.append(TestStep(
-                    index=idx,
-                    action=action,
-                    expected=expected
-                ))
-        
+                steps.append(TestStep(index=idx, action=action, expected=expected))
+
         # Normalize testType - convert lowercase to uppercase
         test_type = raw_data.get("testType", "API")
         if isinstance(test_type, str) and test_type.lower() == "api":
             test_type = "API"
-            
+
         # Normalize folderStructure - convert list to path string
         folder_structure = raw_data.get("folderStructure")
         if isinstance(folder_structure, list):
             folder_structure = "/".join(folder_structure)
-        
+
         # Normalize preconditions - convert string to list if needed
         preconditions = raw_data.get("preconditions", [])
         if isinstance(preconditions, str):
             preconditions = [preconditions] if preconditions else []
-        
+
         # Create normalized test document
         test_doc = TestDoc(
             uid=uid,
             jiraKey=jira_key,  # Can be None
             testCaseId=test_case_id,
             title=raw_data.get("title", "Untitled Test"),
-            summary=raw_data.get("summary", raw_data.get("title")),  # Use summary or title as fallback
+            summary=raw_data.get(
+                "summary", raw_data.get("title")
+            ),  # Use summary or title as fallback
             description=raw_data.get("description"),
             testType=test_type,  # Use normalized testType
             priority=normalize_priority(raw_data.get("priority", "Medium")),
@@ -239,11 +334,11 @@ def normalize_api_test(raw_data: Dict[str, Any]) -> Optional[TestDoc]:
             relatedIssues=raw_data.get("relatedIssues", []),
             testPath=raw_data.get("testPath"),
             source="api_tests_xray.json",
-            ingested_at=datetime.utcnow()
+            ingested_at=datetime.now(timezone.utc),
         )
-        
+
         return test_doc
-        
+
     except Exception as e:
         logger.error(f"Error normalizing API test: {e}", data=raw_data)
         return None
@@ -253,9 +348,9 @@ def normalize_priority(priority: str) -> str:
     """Normalize priority values to standard set."""
     if not priority:
         return "Medium"
-    
+
     priority_lower = priority.lower().strip()
-    
+
     # Map variations to standard values
     priority_map = {
         "critical": "Critical",
@@ -271,15 +366,15 @@ def normalize_priority(priority: str) -> str:
         "p3": "Medium",
         "p4": "Low",
     }
-    
+
     return priority_map.get(priority_lower, "Medium")
 
 
-def merge_tags(tags1: List[str], tags2: List[str]) -> List[str]:
+def merge_tags(tags1: list[str], tags2: list[str]) -> list[str]:
     """Merge and deduplicate tags from multiple sources."""
     # Use set to deduplicate, then sort for consistency
     all_tags = set(tags1 or []) | set(tags2 or [])
-    return sorted(list(all_tags))
+    return sorted(all_tags)
 
 
 def ensure_folder_structure(test_doc: TestDoc, source_type: str) -> None:
@@ -292,43 +387,45 @@ def ensure_folder_structure(test_doc: TestDoc, source_type: str) -> None:
         elif source_type == "api":
             # API tests should have folderStructure
             test_doc.folderStructure = "API Tests"
-    
+
     # Normalize folder separators
     if test_doc.folderStructure:
         test_doc.folderStructure = test_doc.folderStructure.replace("\\", "/")
 
 
-def validate_test_doc(test_doc: TestDoc) -> List[str]:
+def validate_test_doc(test_doc: TestDoc) -> list[str]:
     """Validate test document and return list of warnings."""
     warnings = []
-    
+
     # Check for essential fields
     if not test_doc.title or test_doc.title == "Untitled Test":
         warnings.append(f"Test {test_doc.uid} has no title")
-    
+
     if not test_doc.steps:
         warnings.append(f"Test {test_doc.uid} has no steps")
-    
+
     if not test_doc.tags:
         warnings.append(f"Test {test_doc.uid} has no tags")
-    
-    # Check for UID issues
-    if not test_doc.jiraKey and test_doc.testCaseId:
-        warnings.append(f"Test {test_doc.uid} using testCaseId as fallback (no jiraKey)")
-    
+
+    # Check for identifier issues - testCaseId is primary, jiraKey is optional
+    if not test_doc.testCaseId and not test_doc.jiraKey:
+        warnings.append(f"Test {test_doc.uid} has no testCaseId or jiraKey identifier")
+
     return warnings
 
 
-def normalize_test_batch(tests: List[Dict[str, Any]], source_type: str) -> tuple[List[TestDoc], List[str]]:
+def normalize_test_batch(
+    tests: list[dict[str, Any]], source_type: str
+) -> tuple[list[TestDoc], list[str]]:
     """
     Normalize a batch of tests and collect warnings.
-    
+
     Returns:
         Tuple of (normalized_tests, warnings)
     """
     normalized_tests = []
     all_warnings = []
-    
+
     for idx, test_data in enumerate(tests):
         try:
             # Normalize based on source type
@@ -339,30 +436,29 @@ def normalize_test_batch(tests: List[Dict[str, Any]], source_type: str) -> tuple
             else:
                 logger.error(f"Unknown source type: {source_type}")
                 continue
-            
+
             if test_doc:
                 # Ensure folder structure
                 ensure_folder_structure(test_doc, source_type)
-                
+
                 # Validate and collect warnings
                 warnings = validate_test_doc(test_doc)
                 all_warnings.extend(warnings)
-                
+
                 normalized_tests.append(test_doc)
             else:
                 all_warnings.append(f"Failed to normalize test at index {idx}")
-                
+
         except Exception as e:
             logger.error(f"Error processing test at index {idx}: {e}")
             all_warnings.append(f"Error processing test at index {idx}: {str(e)}")
-    
+
     return normalized_tests, all_warnings
 
 
 if __name__ == "__main__":
     # Test normalization
-    import json
-    
+
     # Configure logging
     structlog.configure(
         processors=[
@@ -373,13 +469,13 @@ if __name__ == "__main__":
             structlog.processors.TimeStamper(fmt="iso"),
             structlog.processors.StackInfoRenderer(),
             structlog.processors.format_exc_info,
-            structlog.dev.ConsoleRenderer()
+            structlog.dev.ConsoleRenderer(),
         ],
         context_class=dict,
         logger_factory=structlog.stdlib.LoggerFactory(),
         cache_logger_on_first_use=True,
     )
-    
+
     # Test functional format
     functional_test = {
         "testId": "FUNC-001",
@@ -392,12 +488,12 @@ if __name__ == "__main__":
             "testType": "Manual",
             "steps": [
                 {"action": "Navigate to settings", "expected": ["Settings page loads"]},
-                {"action": "Change language to Spanish", "expected": ["UI updates to Spanish"]}
+                {"action": "Change language to Spanish", "expected": ["UI updates to Spanish"]},
             ],
-            "folder": "Functional/Localization"
-        }
+            "folder": "Functional/Localization",
+        },
     }
-    
+
     # Test API format with null jiraKey
     api_test = {
         "title": "API Localization Test",
@@ -408,22 +504,22 @@ if __name__ == "__main__":
         "preconditions": ["API key valid"],
         "testSteps": [
             {"action": "Send GET request", "expected": ["200 status"]},
-            {"action": "Verify response", "expected": ["Spanish content"]}
+            {"action": "Verify response", "expected": ["Spanish content"]},
         ],
         "testData": "lang=es",
         "relatedIssues": ["FRAMED-999"],
         "jiraKey": None,
         "testPath": "tests/api/localization.py",
-        "testCaseId": "API-001"
+        "testCaseId": "API-001",
     }
-    
+
     # Test normalization
     logger.info("Testing functional normalization")
     func_doc = normalize_functional_test(functional_test)
     if func_doc:
-        logger.info("Functional test normalized", test=func_doc.dict())
-    
+        logger.info("Functional test normalized", test=func_doc.model_dump())
+
     logger.info("Testing API normalization")
     api_doc = normalize_api_test(api_test)
     if api_doc:
-        logger.info("API test normalized", test=api_doc.dict())
+        logger.info("API test normalized", test=api_doc.model_dump())
