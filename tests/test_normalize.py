@@ -1,6 +1,5 @@
 """Tests for the normalization module."""
 
-
 import pytest
 
 from src.ingest.normalize import normalize_api_test, normalize_functional_test, normalize_priority
@@ -20,14 +19,8 @@ class TestFunctionalNormalization:
             "folder": "/Web/Team",
             "platforms": ["web"],
             "testScript": {
-                "steps": [
-                    {
-                        "index": 1,
-                        "action": "Do something",
-                        "result": "Something happens"
-                    }
-                ]
-            }
+                "steps": [{"index": 1, "action": "Do something", "result": "Something happens"}]
+            },
         }
 
         result = normalize_functional_test(raw_data)
@@ -51,11 +44,7 @@ class TestFunctionalNormalization:
             "priority": "Medium",
             "folder": "/API/Test",
             "platforms": ["api"],
-            "testScript": {
-                "steps": [
-                    {"action": "Call API", "result": "200 OK"}
-                ]
-            }
+            "testScript": {"steps": [{"action": "Call API", "result": "200 OK"}]},
         }
 
         result = normalize_functional_test(raw_data)
@@ -71,7 +60,7 @@ class TestFunctionalNormalization:
         raw_data = {
             "rows": [
                 {"issueKey": "FRAMED-1", "summary": "Test 1"},
-                {"issueKey": "FRAMED-2", "summary": "Test 2"}
+                {"issueKey": "FRAMED-2", "summary": "Test 2"},
             ]
         }
 
@@ -93,9 +82,7 @@ class TestAPINormalization:
             "platforms": ["web"],
             "folderStructure": "API/Tests",
             "tags": ["api", "test"],
-            "steps": [
-                {"action": "Send request", "expected": ["200 OK"]}
-            ]
+            "steps": [{"action": "Send request", "expected": ["200 OK"]}],
         }
 
         result = normalize_api_test(raw_data)
@@ -112,7 +99,7 @@ class TestAPINormalization:
             "priority": "Medium",
             "folderStructure": ["API", "Team", "Roster"],  # List format
             "tags": ["api"],
-            "steps": []
+            "steps": [],
         }
 
         result = normalize_api_test(raw_data)
@@ -128,7 +115,7 @@ class TestAPINormalization:
             "summary": "Summary Text",
             "priority": "Low",
             "folderStructure": "API",
-            "tags": []
+            "tags": [],
         }
 
         result = normalize_api_test(raw_data)
@@ -145,7 +132,7 @@ class TestAPINormalization:
             "title": "Test with null jiraKey",
             "priority": "High",
             "folderStructure": "API/Null",
-            "tags": ["null-test"]
+            "tags": ["null-test"],
         }
 
         result = normalize_api_test(raw_data)

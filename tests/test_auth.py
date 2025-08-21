@@ -15,28 +15,34 @@ from src.auth.auth import get_api_key, verify_api_key, verify_api_key_with_info
 class TestAuthentication:
     """Test authentication functions."""
 
-    @patch('src.auth.secure_key_manager._key_manager', None)
+    @patch("src.auth.secure_key_manager._key_manager", None)
     def test_verify_api_key_with_master_key(self):
         """Test API key verification with master key."""
         with patch.dict(os.environ, {"MASTER_API_KEY": "test-master-key"}, clear=True):
             # Clear global key manager to force reload
             from src.auth import secure_key_manager
+
             secure_key_manager._key_manager = None
 
             assert verify_api_key("test-master-key") is True
             assert verify_api_key("wrong-key") is False
             assert verify_api_key("") is False
 
-    @patch('src.auth.secure_key_manager._key_manager', None)
+    @patch("src.auth.secure_key_manager._key_manager", None)
     def test_verify_api_key_with_user_keys(self):
         """Test API key verification with individual user keys."""
-        with patch.dict(os.environ, {
-            "USER_API_KEY_1": "user-key-1",
-            "USER_API_KEY_2": "user-key-2",
-            "USER_API_KEY_3": "user-key-3"
-        }, clear=True):
+        with patch.dict(
+            os.environ,
+            {
+                "USER_API_KEY_1": "user-key-1",
+                "USER_API_KEY_2": "user-key-2",
+                "USER_API_KEY_3": "user-key-3",
+            },
+            clear=True,
+        ):
             # Clear global key manager to force reload
             from src.auth import secure_key_manager
+
             secure_key_manager._key_manager = None
 
             assert verify_api_key("user-key-1") is True
@@ -44,12 +50,13 @@ class TestAuthentication:
             assert verify_api_key("user-key-3") is True
             assert verify_api_key("wrong-key") is False
 
-    @patch('src.auth.secure_key_manager._key_manager', None)
+    @patch("src.auth.secure_key_manager._key_manager", None)
     def test_verify_api_key_no_keys_configured(self):
         """Test API key verification when no keys are configured."""
         with patch.dict(os.environ, {}, clear=True):
             # Clear global key manager to force reload
             from src.auth import secure_key_manager
+
             secure_key_manager._key_manager = None
 
             assert verify_api_key("any-key") is False
@@ -64,12 +71,13 @@ class TestAuthentication:
         assert exc_info.value.detail == "Missing API key"
 
     @pytest.mark.asyncio
-    @patch('src.auth.secure_key_manager._key_manager', None)
+    @patch("src.auth.secure_key_manager._key_manager", None)
     async def test_get_api_key_invalid_key(self):
         """Test get_api_key with invalid key."""
         with patch.dict(os.environ, {"MASTER_API_KEY": "valid-key"}, clear=True):
             # Clear global key manager to force reload
             from src.auth import secure_key_manager
+
             secure_key_manager._key_manager = None
 
             with pytest.raises(HTTPException) as exc_info:
@@ -79,27 +87,28 @@ class TestAuthentication:
             assert exc_info.value.detail == "Invalid API key"
 
     @pytest.mark.asyncio
-    @patch('src.auth.secure_key_manager._key_manager', None)
+    @patch("src.auth.secure_key_manager._key_manager", None)
     async def test_get_api_key_valid_key(self):
         """Test get_api_key with valid key."""
         with patch.dict(os.environ, {"MASTER_API_KEY": "valid-key"}, clear=True):
             # Clear global key manager to force reload
             from src.auth import secure_key_manager
+
             secure_key_manager._key_manager = None
 
             result = await get_api_key("valid-key")
             assert result == "valid-key"
 
     @pytest.mark.asyncio
-    @patch('src.auth.secure_key_manager._key_manager', None)
+    @patch("src.auth.secure_key_manager._key_manager", None)
     async def test_verify_api_key_with_info(self):
         """Test verify_api_key_with_info function."""
-        with patch.dict(os.environ, {
-            "MASTER_API_KEY": "master-key",
-            "USER_API_KEY_1": "user-key-1"
-        }, clear=True):
+        with patch.dict(
+            os.environ, {"MASTER_API_KEY": "master-key", "USER_API_KEY_1": "user-key-1"}, clear=True
+        ):
             # Clear global key manager to force reload
             from src.auth import secure_key_manager
+
             secure_key_manager._key_manager = None
 
             # Test master key

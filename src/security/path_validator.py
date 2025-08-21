@@ -44,17 +44,18 @@ logger = structlog.get_logger()
 
 class PathValidationError(Exception):
     """Exception raised when path validation fails.
-    
+
     This exception is raised when any security validation check fails,
     including directory traversal attempts, symbolic link detection,
     dangerous pattern matches, or boundary violations.
     """
+
     pass
 
 
 class SecurePathValidator:
     """Secure path validator that prevents multiple attack vectors.
-    
+
     This class implements defense-in-depth security for file path validation:
     - Directory traversal attacks (../, ~/, etc.)
     - Symbolic link attacks (symlink to sensitive files)
@@ -62,33 +63,35 @@ class SecurePathValidator:
     - Command injection via special characters
     - Access to system files outside allowed directories
     - DoS attacks via oversized files
-    
+
     Security Model:
         1. Pattern-based dangerous string detection
         2. Symbolic link check before resolution
         3. Path resolution with boundary enforcement
         4. Extension and size validation
         5. Comprehensive security logging
-        
+
     Performance:
         - Initialization: O(d) where d is number of base directories
         - Validation: O(n*p + d) where n=path length, p=patterns, d=directories
     """
 
-    def __init__(self, allowed_base_dirs: list[str], allowed_extensions: Optional[list[str]] = None):
+    def __init__(
+        self, allowed_base_dirs: list[str], allowed_extensions: Optional[list[str]] = None
+    ):
         """Initialize the validator with security constraints.
 
         Args:
             allowed_base_dirs: List of allowed base directories (absolute paths).
                               All file access is restricted to these directories.
-            allowed_extensions: Optional list of allowed file extensions 
+            allowed_extensions: Optional list of allowed file extensions
                               (e.g., ['.json', '.txt']). If None, all extensions allowed.
-                              
+
         Raises:
             ValueError: If any base directory doesn't exist or isn't a directory
-            
+
         Complexity: O(d) where d is number of base directories to validate
-        
+
         Security Notes:
             - Base directories are resolved to prevent symlink attacks
             - All directories must exist and be actual directories
@@ -107,7 +110,7 @@ class SecurePathValidator:
 
     def validate_and_resolve_path(self, user_path: str) -> Path:
         """Validate and resolve a user-provided path securely.
-        
+
         This method implements a multi-stage security validation process:
         1. Input sanitization and dangerous pattern detection
         2. Path construction and symbolic link checks
@@ -135,15 +138,15 @@ class SecurePathValidator:
                 - Path outside allowed directories
                 - Invalid file extension
                 - File too large (>100MB)
-                
+
         Complexity: O(n*p + d + f) where:
             - n = path length
             - p = number of dangerous patterns (18 patterns)
             - d = number of allowed directories
             - f = file system operations (stat, resolve)
-            
+
         Security Flow:
-            Input → Pattern Check → Path Construction → Symlink Check → 
+            Input → Pattern Check → Path Construction → Symlink Check →
             Resolution → Boundary Check → Extension Check → Size Check → Output
         """
         # Step 1: Input validation and sanitization
@@ -154,19 +157,19 @@ class SecurePathValidator:
 
         # Step 2: Dangerous pattern detection (defense against multiple attack vectors)
         dangerous_patterns = [
-            "..",           # Directory traversal attack
-            "~",            # Home directory access
-            "file://",      # File URL scheme (SSRF prevention)
-            "http://",      # HTTP URL scheme (SSRF prevention)
-            "https://",     # HTTPS URL scheme (SSRF prevention)
-            "ftp://",       # FTP URL scheme (SSRF prevention)
-            "\x00",         # Null byte injection
-            "|",            # Command injection via pipe
-            ";",            # Command injection via semicolon
-            "&",            # Command injection via ampersand
-            "`",            # Command injection via backtick
-            "$(",           # Command substitution
-            "${",           # Variable expansion
+            "..",  # Directory traversal attack
+            "~",  # Home directory access
+            "file://",  # File URL scheme (SSRF prevention)
+            "http://",  # HTTP URL scheme (SSRF prevention)
+            "https://",  # HTTPS URL scheme (SSRF prevention)
+            "ftp://",  # FTP URL scheme (SSRF prevention)
+            "\x00",  # Null byte injection
+            "|",  # Command injection via pipe
+            ";",  # Command injection via semicolon
+            "&",  # Command injection via ampersand
+            "`",  # Command injection via backtick
+            "$(",  # Command substitution
+            "${",  # Variable expansion
         ]
 
         # Pattern matching - O(n*p) where n=path length, p=pattern count
@@ -177,7 +180,7 @@ class SecurePathValidator:
                     "Dangerous pattern detected in path",
                     path=user_path,
                     pattern=pattern,
-                    extra={"security_event": True}
+                    extra={"security_event": True},
                 )
                 raise PathValidationError(f"Path contains dangerous pattern: {pattern}")
 
@@ -192,10 +195,7 @@ class SecurePathValidator:
                 candidate_path = self.allowed_base_dirs[0] / user_path
         except (OSError, ValueError) as e:
             logger.warning(
-                "Invalid path format",
-                path=user_path,
-                error=str(e),
-                extra={"security_event": True}
+                "Invalid path format", path=user_path, error=str(e), extra={"security_event": True}
             )
             raise PathValidationError(f"Invalid path format: {user_path}") from None
 
@@ -209,7 +209,7 @@ class SecurePathValidator:
                     logger.warning(
                         "Symbolic link detected",
                         path=str(candidate_path),
-                        extra={"security_event": True}
+                        extra={"security_event": True},
                     )
                     raise PathValidationError("Symbolic links are not allowed")
             except (OSError, ValueError) as e:
@@ -217,7 +217,7 @@ class SecurePathValidator:
                     "Error checking file status",
                     path=str(candidate_path),
                     error=str(e),
-                    extra={"security_event": True}
+                    extra={"security_event": True},
                 )
                 raise PathValidationError("Unable to validate file status") from None
 
@@ -231,7 +231,7 @@ class SecurePathValidator:
                 "Path resolution failed",
                 path=user_path,
                 error=str(e),
-                extra={"security_event": True}
+                extra={"security_event": True},
             )
             raise PathValidationError(f"Path resolution failed: {user_path}") from None
 
@@ -254,7 +254,7 @@ class SecurePathValidator:
                 "Path outside allowed directories",
                 path=str(candidate_path),
                 allowed_dirs=[str(d) for d in self.allowed_base_dirs],
-                extra={"security_event": True}
+                extra={"security_event": True},
             )
             raise PathValidationError("Path is outside allowed directories")
 
@@ -267,7 +267,7 @@ class SecurePathValidator:
                     path=str(candidate_path),
                     extension=file_suffix,
                     allowed_extensions=self.allowed_extensions,
-                    extra={"security_event": True}
+                    extra={"security_event": True},
                 )
                 raise PathValidationError(f"File extension '{file_suffix}' not allowed")
 
@@ -286,7 +286,7 @@ class SecurePathValidator:
                         "File too large",
                         path=str(candidate_path),
                         size=file_size,
-                        extra={"security_event": True}
+                        extra={"security_event": True},
                     )
                     raise PathValidationError("File too large (max 100MB)")
             except (OSError, ValueError) as e:
@@ -294,9 +294,7 @@ class SecurePathValidator:
 
         # Log successful validation for audit trail
         logger.info(
-            "Path validation successful",
-            original_path=user_path,
-            resolved_path=str(candidate_path)
+            "Path validation successful", original_path=user_path, resolved_path=str(candidate_path)
         )
 
         return candidate_path
@@ -308,15 +306,15 @@ _data_validator: Optional[SecurePathValidator] = None
 
 def get_data_path_validator() -> SecurePathValidator:
     """Get the global data path validator instance (singleton pattern).
-    
+
     Returns a preconfigured validator for the application's data directory
     that only allows JSON files within the 'data' directory.
-    
+
     Returns:
         SecurePathValidator: Configured for data directory with JSON-only access
-        
+
     Complexity: O(1) - Simple instance check and creation
-    
+
     Thread Safety:
         Instance creation is not thread-safe, but since this is typically
         called during application startup, it's generally safe in practice.
@@ -328,20 +326,20 @@ def get_data_path_validator() -> SecurePathValidator:
         data_dir = Path("data").resolve()
         _data_validator = SecurePathValidator(
             allowed_base_dirs=[str(data_dir)],
-            allowed_extensions=['.json']  # Only JSON files allowed for data ingestion
+            allowed_extensions=[".json"],  # Only JSON files allowed for data ingestion
         )
     return _data_validator
 
 
 def validate_data_file_path(user_path: str) -> Path:
     """Validate a file path for data ingestion operations.
-    
+
     Convenience function that uses the global data path validator to
     validate file paths for test data ingestion. Ensures files are:
     - Within the 'data' directory
     - Have .json extension
     - Pass all security checks
-    
+
     Args:
         user_path: User-provided file path (relative to data dir or absolute)
 
@@ -350,9 +348,9 @@ def validate_data_file_path(user_path: str) -> Path:
 
     Raises:
         PathValidationError: If validation fails for any security reason
-        
+
     Complexity: O(n*p + d + f) - Same as validate_and_resolve_path()
-    
+
     Usage:
         path = validate_data_file_path("tests/api_tests.json")
         # Returns: /absolute/path/to/data/tests/api_tests.json

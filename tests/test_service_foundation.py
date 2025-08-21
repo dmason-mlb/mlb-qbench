@@ -1,6 +1,5 @@
 """Foundation tests for service layer - validates async testing patterns."""
 
-
 import pytest
 from test_helpers import (
     AsyncTestCase,
@@ -25,6 +24,7 @@ class TestAsyncPatterns(AsyncTestCase):
     async def test_timeout_decorator(self):
         """Test that async timeout decorator works."""
         import asyncio
+
         # This should complete quickly
         await asyncio.sleep(0.1)
         assert True
@@ -47,18 +47,8 @@ class TestMockFactories:
     def test_mock_qdrant_search_response(self):
         """Test that Qdrant search response factory works."""
         test_results = [
-            {
-                "uid": "test-1",
-                "jiraKey": "TEST-1",
-                "title": "Test 1",
-                "score": 0.9
-            },
-            {
-                "uid": "test-2",
-                "jiraKey": "TEST-2",
-                "title": "Test 2",
-                "score": 0.8
-            }
+            {"uid": "test-1", "jiraKey": "TEST-1", "title": "Test 1", "score": 0.9},
+            {"uid": "test-2", "jiraKey": "TEST-2", "title": "Test 2", "score": 0.8},
         ]
 
         response = MockQdrantResponses.create_search_response(test_results)
@@ -101,9 +91,7 @@ class TestAsyncServicePatterns:
         """Test that our async Qdrant client mock works."""
         # Simulate search operation
         results = await mock_async_qdrant_client.search(
-            collection_name="test_docs",
-            query_vector=[0.1] * 3072,
-            limit=10
+            collection_name="test_docs", query_vector=[0.1] * 3072, limit=10
         )
 
         # Verify mock was called and returns expected result
@@ -133,7 +121,7 @@ class TestAsyncServicePatterns:
             results = await asyncio.gather(
                 mock_operation(0.1, "result1"),
                 mock_operation(0.1, "result2"),
-                mock_operation(0.1, "result3")
+                mock_operation(0.1, "result3"),
             )
 
         # Should complete in ~0.1 seconds (concurrent) not ~0.3 seconds (sequential)
@@ -147,6 +135,7 @@ class TestEnvironmentSetup:
     def test_environment_variables_mocked(self, mock_env_vars):
         """Test that environment variables are properly mocked."""
         import os
+
         assert os.getenv("QDRANT_URL") == "http://localhost:6533"
         assert os.getenv("EMBED_PROVIDER") == "openai"
         assert os.getenv("MASTER_API_KEY") == "test-master-key"
@@ -154,6 +143,7 @@ class TestEnvironmentSetup:
     def test_temp_directory_fixture(self, temp_dir):
         """Test that temporary directory fixture works."""
         import os
+
         assert os.path.exists(temp_dir)
         assert os.path.isdir(temp_dir)
 

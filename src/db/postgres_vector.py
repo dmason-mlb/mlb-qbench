@@ -12,44 +12,37 @@ Key Features:
     - Comprehensive error handling and retry logic
 """
 
-import asyncio
 import json
 import os
-from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime
+from typing import Any, Optional
 
 import asyncpg
 import numpy as np
 import structlog
 from asyncpg.pool import Pool
-from tenacity import (
-    AsyncRetrying,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
 
-from src.models.test_models import TestDoc, TestStep
+from src.models.test_models import TestDoc
 
 logger = structlog.get_logger()
 
 
 class PostgresVectorDB:
     """Async PostgreSQL database interface with pgvector support.
-    
+
     Manages connection pooling, batch operations, and vector similarity search
     for the MLB QBench test retrieval system.
     """
-    
+
     def __init__(self, dsn: Optional[str] = None):
         """Initialize the database connection.
-        
+
         Args:
             dsn: PostgreSQL connection string. If not provided, uses DATABASE_URL env var.
         """
         self.dsn = dsn or os.getenv("DATABASE_URL", "postgresql://postgres@localhost/mlb_qbench")
         self.pool: Optional[Pool] = None
-        
+
     async def initialize(self):
         """Create connection pool and register vector type."""
         try:
@@ -59,59 +52,52 @@ class PostgresVectorDB:
                 max_size=20,
                 max_queries=50000,
                 max_inactive_connection_lifetime=300,
-                command_timeout=60
+                command_timeout=60,
             )
-            
+
             # Register vector type for asyncpg
             async with self.pool.acquire() as conn:
                 await conn.execute("CREATE EXTENSION IF NOT EXISTS vector;")
                 # Register the vector type for proper handling
                 await conn.set_type_codec(
-                    'vector',
-                    encoder=lambda v: v,
-                    decoder=lambda v: v,
-                    format='text'
+                    "vector", encoder=lambda v: v, decoder=lambda v: v, format="text"
                 )
-                
-            logger.info("PostgreSQL connection pool initialized", 
-                       pool_size=self.pool.get_size())
-            
+
+            logger.info("PostgreSQL connection pool initialized", pool_size=self.pool.get_size())
+
         except Exception as e:
             logger.error("Failed to initialize PostgreSQL pool", error=str(e))
             raise
-            
+
     async def close(self):
         """Close the connection pool."""
         if self.pool:
             await self.pool.close()
             logger.info("PostgreSQL connection pool closed")
-            
+
     async def execute_schema(self, schema_file: str):
         """Execute SQL schema file.
-        
+
         Args:
             schema_file: Path to SQL file containing schema definitions
         """
-        with open(schema_file, 'r') as f:
+        with open(schema_file) as f:
             schema_sql = f.read()
-            
+
         async with self.pool.acquire() as conn:
             await conn.execute(schema_sql)
             logger.info("Schema executed successfully", file=schema_file)
-            
+
     async def batch_insert_documents(
-        self, 
-        documents: List[TestDoc], 
-        embedder,
-        batch_size: int = 100
-    ) -> Dict[str, Any]:
+        self, documents: list[TestDoc], embedder, batch_size: int = 100
+    ) -> dict[str, Any]:
         """Efficiently insert documents using COPY command.
-        
+
         Args:
             documents: List of TestDoc objects to insert
             embedder: Embedding provider instance
             batch_size: Number of documents to process in each batch
-            
+
         Returns:
             Dictionary with insertion statistics
         """
@@ -119,57 +105,66 @@ class PostgresVectorDB:
         inserted = 0
         failed = 0
         errors = []
-        
+
         async with self.pool.acquire() as conn:
             async with conn.transaction():
                 for i in range(0, total, batch_size):
-                    batch = documents[i:i + batch_size]
-                    
+                    batch = documents[i : i + batch_size]
+
                     try:
                         # Generate embeddings for batch
                         texts = [f"{doc.title}\n{doc.description or ''}" for doc in batch]
                         embeddings = await embedder.embed(texts)
-                        
+
                         # Prepare data for COPY
                         copy_data = []
                         for doc, embedding in zip(batch, embeddings):
                             # Convert embedding to PostgreSQL array format
-                            embedding_str = '[' + ','.join(map(str, embedding)) + ']'
-                            
+                            embedding_str = "[" + ",".join(map(str, embedding)) + "]"
+
                             # Handle optional customFields attribute
-                            custom_fields = getattr(doc, 'customFields', None)
-                            custom_fields_json = json.dumps(custom_fields) if custom_fields else json.dumps({})
-                            
+                            custom_fields = getattr(doc, "customFields", None)
+                            custom_fields_json = (
+                                json.dumps(custom_fields) if custom_fields else json.dumps({})
+                            )
+
                             # Convert testCaseId to int if it's a string
-                            test_case_id = int(doc.testCaseId) if isinstance(doc.testCaseId, str) else doc.testCaseId
-                            
-                            copy_data.append((
-                                test_case_id,
-                                doc.uid,
-                                doc.jiraKey,
-                                doc.title,
-                                doc.description,
-                                doc.summary,
-                                embedding_str,
-                                doc.testType,
-                                doc.priority,
-                                doc.platforms or [],
-                                doc.tags or [],
-                                doc.folderStructure,
-                                None,  # suite_id
-                                None,  # section_id
-                                None,  # project_id
-                                doc.source,
-                                datetime.now(),  # ingested_at
-                                datetime.now(),  # updated_at
-                                False,  # is_automated
-                                None,  # refs
-                                custom_fields_json
-                            ))
-                        
+                            test_case_id = (
+                                int(doc.testCaseId)
+                                if isinstance(doc.testCaseId, str)
+                                else doc.testCaseId
+                            )
+
+                            copy_data.append(
+                                (
+                                    test_case_id,
+                                    doc.uid,
+                                    doc.jiraKey,
+                                    doc.title,
+                                    doc.description,
+                                    doc.summary,
+                                    embedding_str,
+                                    doc.testType,
+                                    doc.priority,
+                                    doc.platforms or [],
+                                    doc.tags or [],
+                                    doc.folderStructure,
+                                    None,  # suite_id
+                                    None,  # section_id
+                                    None,  # project_id
+                                    doc.source,
+                                    datetime.now(),  # ingested_at
+                                    datetime.now(),  # updated_at
+                                    False,  # is_automated
+                                    None,  # refs
+                                    custom_fields_json,
+                                )
+                            )
+
                         # Use individual inserts for now (COPY has issues with vector type)
                         for data in copy_data:
-                            await conn.execute("""
+                            await conn.execute(
+                                """
                                 INSERT INTO test_documents (
                                     test_case_id, uid, jira_key, title, description,
                                     summary, embedding, test_type, priority, platforms,
@@ -180,81 +175,89 @@ class PostgresVectorDB:
                                     $1, $2, $3, $4, $5, $6, $7::vector, $8, $9, $10,
                                     $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21::jsonb
                                 )
-                            """, *data)
-                        
+                            """,
+                                *data,
+                            )
+
                         # Insert steps for each document
                         for doc in batch:
                             if doc.steps:
                                 doc_id = await conn.fetchval(
-                                    "SELECT id FROM test_documents WHERE uid = $1",
-                                    doc.uid
+                                    "SELECT id FROM test_documents WHERE uid = $1", doc.uid
                                 )
-                                
+
                                 step_data = []
                                 for step in doc.steps:
                                     # Generate embedding for step
                                     step_text = f"{step.action}\n" + "\n".join(step.expected)
                                     step_embedding = await embedder.embed(step_text)
-                                    step_embedding_str = '[' + ','.join(map(str, step_embedding)) + ']'
-                                    
-                                    step_data.append((
-                                        doc_id,
-                                        step.index,
-                                        step.action,
-                                        step.expected,
-                                        None,  # data field
-                                        step_embedding_str
-                                    ))
-                                
+                                    step_embedding_str = (
+                                        "[" + ",".join(map(str, step_embedding)) + "]"
+                                    )
+
+                                    step_data.append(
+                                        (
+                                            doc_id,
+                                            step.index,
+                                            step.action,
+                                            step.expected,
+                                            None,  # data field
+                                            step_embedding_str,
+                                        )
+                                    )
+
                                 if step_data:
                                     for step_record in step_data:
-                                        await conn.execute("""
+                                        await conn.execute(
+                                            """
                                             INSERT INTO test_steps (
                                                 test_document_id, step_index, action,
                                                 expected, data, embedding
                                             ) VALUES ($1, $2, $3, $4, $5, $6::vector)
-                                        """, *step_record)
-                        
+                                        """,
+                                            *step_record,
+                                        )
+
                         inserted += len(batch)
-                        logger.info(f"Inserted batch", 
-                                   batch_start=i, 
-                                   batch_size=len(batch),
-                                   progress=f"{inserted}/{total}")
-                        
+                        logger.info(
+                            "Inserted batch",
+                            batch_start=i,
+                            batch_size=len(batch),
+                            progress=f"{inserted}/{total}",
+                        )
+
                     except Exception as e:
                         failed += len(batch)
                         errors.append(str(e))
-                        logger.error("Batch insertion failed", 
-                                    batch_start=i,
-                                    error=str(e))
-        
+                        logger.error("Batch insertion failed", batch_start=i, error=str(e))
+
         return {
             "total": total,
             "inserted": inserted,
             "failed": failed,
-            "errors": errors[:10]  # Limit error messages
+            "errors": errors[:10],  # Limit error messages
         }
-    
+
     async def hybrid_search(
         self,
         query_embedding: np.ndarray,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: Optional[dict[str, Any]] = None,
         limit: int = 10,
-        include_steps: bool = True
-    ) -> List[Dict[str, Any]]:
+        include_steps: bool = True,
+    ) -> list[dict[str, Any]]:
         """Perform hybrid search combining vector similarity and metadata filters.
-        
+
         Args:
             query_embedding: Query vector for similarity search
             filters: Optional metadata filters (priority, tags, platforms, etc.)
             limit: Maximum number of results
             include_steps: Whether to include matching steps in results
-            
+
         Returns:
             List of matching documents with similarity scores
         """
         filters = filters or {}
-        
+
         # Convert embedding to PostgreSQL vector format
         if isinstance(query_embedding, np.ndarray):
             embedding_list = query_embedding.tolist()
@@ -262,12 +265,12 @@ class PostgresVectorDB:
             embedding_list = query_embedding
         else:
             raise ValueError(f"Unexpected embedding type: {type(query_embedding)}")
-            
-        embedding_str = '[' + ','.join(map(str, embedding_list)) + ']'
-        
+
+        embedding_str = "[" + ",".join(map(str, embedding_list)) + "]"
+
         # Build the query dynamically based on filters
         query = """
-            SELECT 
+            SELECT
                 td.id,
                 td.test_case_id,
                 td.uid,
@@ -285,55 +288,55 @@ class PostgresVectorDB:
             FROM test_documents td
             WHERE 1=1
         """
-        
+
         params = [embedding_str]
         param_count = 2
-        
+
         # Add filter conditions
-        if filters.get('priority'):
-            if isinstance(filters['priority'], list):
+        if filters.get("priority"):
+            if isinstance(filters["priority"], list):
                 query += f" AND td.priority = ANY(${param_count})"
-                params.append(filters['priority'])
+                params.append(filters["priority"])
             else:
                 query += f" AND td.priority = ${param_count}"
-                params.append(filters['priority'])
+                params.append(filters["priority"])
             param_count += 1
-            
-        if filters.get('tags'):
+
+        if filters.get("tags"):
             query += f" AND td.tags && ${param_count}"  # Array overlap
-            params.append(filters['tags'])
+            params.append(filters["tags"])
             param_count += 1
-            
-        if filters.get('platforms'):
+
+        if filters.get("platforms"):
             query += f" AND td.platforms && ${param_count}"
-            params.append(filters['platforms'])
+            params.append(filters["platforms"])
             param_count += 1
-            
-        if filters.get('folderStructure'):
+
+        if filters.get("folderStructure"):
             query += f" AND td.folder_structure LIKE ${param_count}"
             params.append(f"{filters['folderStructure']}%")
             param_count += 1
-            
-        if filters.get('testType'):
+
+        if filters.get("testType"):
             query += f" AND td.test_type = ${param_count}"
-            params.append(filters['testType'])
+            params.append(filters["testType"])
             param_count += 1
-        
+
         # Order by similarity and limit
         query += f" ORDER BY td.embedding <=> $1::vector LIMIT ${param_count}"
         params.append(limit)
-        
+
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(query, *params)
-            
+
             results = []
             for row in rows:
                 result = dict(row)
-                
+
                 # Include matching steps if requested
                 if include_steps:
                     steps_query = """
-                        SELECT 
+                        SELECT
                             step_index,
                             action,
                             expected,
@@ -343,26 +346,26 @@ class PostgresVectorDB:
                         ORDER BY embedding <=> $1::vector
                         LIMIT 3
                     """
-                    step_rows = await conn.fetch(steps_query, embedding_str, row['id'])
-                    result['matched_steps'] = [dict(s) for s in step_rows]
-                
+                    step_rows = await conn.fetch(steps_query, embedding_str, row["id"])
+                    result["matched_steps"] = [dict(s) for s in step_rows]
+
                 results.append(result)
-        
+
         return results
-    
-    async def search_by_jira_key(self, jira_key: str) -> Optional[Dict[str, Any]]:
+
+    async def search_by_jira_key(self, jira_key: str) -> Optional[dict[str, Any]]:
         """Find a test by its JIRA key.
-        
+
         Args:
             jira_key: JIRA issue key
-            
+
         Returns:
             Test document if found, None otherwise
         """
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                SELECT 
+                SELECT
                     td.*,
                     array_agg(
                         json_build_object(
@@ -376,41 +379,36 @@ class PostgresVectorDB:
                 WHERE td.jira_key = $1
                 GROUP BY td.id
                 """,
-                jira_key
+                jira_key,
             )
-            
+
             if row:
                 return dict(row)
             return None
-    
-    async def find_similar_tests(
-        self,
-        test_uid: str,
-        limit: int = 10
-    ) -> List[Dict[str, Any]]:
+
+    async def find_similar_tests(self, test_uid: str, limit: int = 10) -> list[dict[str, Any]]:
         """Find tests similar to a given test.
-        
+
         Args:
             test_uid: UID of the reference test
             limit: Maximum number of similar tests
-            
+
         Returns:
             List of similar tests with similarity scores
         """
         async with self.pool.acquire() as conn:
             # Get the embedding of the reference test
             ref_embedding = await conn.fetchval(
-                "SELECT embedding FROM test_documents WHERE uid = $1",
-                test_uid
+                "SELECT embedding FROM test_documents WHERE uid = $1", test_uid
             )
-            
+
             if not ref_embedding:
                 return []
-            
+
             # Find similar tests
             rows = await conn.fetch(
                 """
-                SELECT 
+                SELECT
                     test_case_id,
                     uid,
                     jira_key,
@@ -427,28 +425,24 @@ class PostgresVectorDB:
                 """,
                 ref_embedding,
                 test_uid,
-                limit
+                limit,
             )
-            
+
             return [dict(row) for row in rows]
-    
-    async def get_statistics(self) -> Dict[str, Any]:
+
+    async def get_statistics(self) -> dict[str, Any]:
         """Get database statistics.
-        
+
         Returns:
             Dictionary with document counts, index stats, etc.
         """
         async with self.pool.acquire() as conn:
             stats = {}
-            
+
             # Document counts
-            stats['total_documents'] = await conn.fetchval(
-                "SELECT COUNT(*) FROM test_documents"
-            )
-            stats['total_steps'] = await conn.fetchval(
-                "SELECT COUNT(*) FROM test_steps"
-            )
-            
+            stats["total_documents"] = await conn.fetchval("SELECT COUNT(*) FROM test_documents")
+            stats["total_steps"] = await conn.fetchval("SELECT COUNT(*) FROM test_steps")
+
             # Priority distribution
             priority_rows = await conn.fetch(
                 """
@@ -458,10 +452,10 @@ class PostgresVectorDB:
                 GROUP BY priority
                 """
             )
-            stats['priority_distribution'] = {
-                row['priority']: row['count'] for row in priority_rows
+            stats["priority_distribution"] = {
+                row["priority"]: row["count"] for row in priority_rows
             }
-            
+
             # Test type distribution
             type_rows = await conn.fetch(
                 """
@@ -471,36 +465,31 @@ class PostgresVectorDB:
                 GROUP BY test_type
                 """
             )
-            stats['test_type_distribution'] = {
-                row['test_type']: row['count'] for row in type_rows
-            }
-            
+            stats["test_type_distribution"] = {row["test_type"]: row["count"] for row in type_rows}
+
             # Index statistics
             index_rows = await conn.fetch(
                 """
-                SELECT 
+                SELECT
                     indexname,
                     pg_size_pretty(pg_relation_size(indexname::regclass)) as size
                 FROM pg_indexes
                 WHERE tablename IN ('test_documents', 'test_steps')
                 """
             )
-            stats['indexes'] = [dict(row) for row in index_rows]
-            
+            stats["indexes"] = [dict(row) for row in index_rows]
+
             return stats
-    
+
     async def delete_by_uid(self, uid: str) -> bool:
         """Delete a test document by UID.
-        
+
         Args:
             uid: Test document UID
-            
+
         Returns:
             True if deleted, False if not found
         """
         async with self.pool.acquire() as conn:
-            result = await conn.execute(
-                "DELETE FROM test_documents WHERE uid = $1",
-                uid
-            )
-            return result.split()[-1] != '0'
+            result = await conn.execute("DELETE FROM test_documents WHERE uid = $1", uid)
+            return result.split()[-1] != "0"

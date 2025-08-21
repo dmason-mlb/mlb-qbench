@@ -24,9 +24,7 @@ class TestFilterValueValidation:
     def test_valid_string_filter(self):
         """Test valid string filter value."""
         filter_val = FilterValue(
-            field=FilterableField.TEST_TYPE,
-            operator=FilterOperator.EQUALS,
-            value="Functional"
+            field=FilterableField.TEST_TYPE, operator=FilterOperator.EQUALS, value="Functional"
         )
         assert filter_val.value == "Functional"
         assert filter_val.field == FilterableField.TEST_TYPE
@@ -34,20 +32,14 @@ class TestFilterValueValidation:
     def test_empty_string_filter_rejected(self):
         """Test that empty string filter values are rejected."""
         with pytest.raises(ValueError, match="Filter value cannot be empty"):
-            FilterValue(
-                field=FilterableField.TEST_TYPE,
-                operator=FilterOperator.EQUALS,
-                value=""
-            )
+            FilterValue(field=FilterableField.TEST_TYPE, operator=FilterOperator.EQUALS, value="")
 
     def test_long_string_filter_rejected(self):
         """Test that overly long string filter values are rejected."""
         long_value = "a" * 101  # Exceeds 100 char limit
         with pytest.raises(ValueError, match="Filter value too long"):
             FilterValue(
-                field=FilterableField.TEST_TYPE,
-                operator=FilterOperator.EQUALS,
-                value=long_value
+                field=FilterableField.TEST_TYPE, operator=FilterOperator.EQUALS, value=long_value
             )
 
     def test_dangerous_characters_rejected(self):
@@ -57,7 +49,7 @@ class TestFilterValueValidation:
             "'; DROP TABLE tests; --",
             "value with 'quotes",
             'value with "quotes',
-            "value & ampersand"
+            "value & ampersand",
         ]
 
         for dangerous_value in dangerous_values:
@@ -65,52 +57,40 @@ class TestFilterValueValidation:
                 FilterValue(
                     field=FilterableField.TEST_TYPE,
                     operator=FilterOperator.EQUALS,
-                    value=dangerous_value
+                    value=dangerous_value,
                 )
 
     def test_integer_filter_validation(self):
         """Test integer filter value validation."""
         # Valid integer - using a string field that accepts ints
         filter_val = FilterValue(
-            field=FilterableField.TEST_TYPE,
-            operator=FilterOperator.EQUALS,
-            value=1
+            field=FilterableField.TEST_TYPE, operator=FilterOperator.EQUALS, value=1
         )
         assert filter_val.value == 1
 
         # Out of range integer
         with pytest.raises(ValueError, match="out of range"):
             FilterValue(
-                field=FilterableField.TEST_TYPE,
-                operator=FilterOperator.EQUALS,
-                value=2000000
+                field=FilterableField.TEST_TYPE, operator=FilterOperator.EQUALS, value=2000000
             )
 
     def test_list_filter_validation(self):
         """Test list filter value validation."""
         # Valid list
         filter_val = FilterValue(
-            field=FilterableField.PLATFORMS,
-            operator=FilterOperator.IN,
-            value=["web", "mobile"]
+            field=FilterableField.PLATFORMS, operator=FilterOperator.IN, value=["web", "mobile"]
         )
         assert filter_val.value == ["web", "mobile"]
 
         # Empty list
         with pytest.raises(ValueError, match="Filter list cannot be empty"):
-            FilterValue(
-                field=FilterableField.PLATFORMS,
-                operator=FilterOperator.IN,
-                value=[]
-            )
+            FilterValue(field=FilterableField.PLATFORMS, operator=FilterOperator.IN, value=[])
 
         # Too long list
         long_list = ["item"] * 51
         with pytest.raises(ValueError, match="Filter list too long"):
             FilterValue(
-                field=FilterableField.PLATFORMS,
-                operator=FilterOperator.IN,
-                value=long_list
+                field=FilterableField.PLATFORMS, operator=FilterOperator.IN, value=long_list
             )
 
     def test_jira_key_format_validation(self):
@@ -119,9 +99,7 @@ class TestFilterValueValidation:
         valid_keys = ["TEST-123", "PROJ-1", "FRAMED-1390", "API-001"]
         for key in valid_keys:
             filter_val = FilterValue(
-                field=FilterableField.JIRA_KEY,
-                operator=FilterOperator.EQUALS,
-                value=key
+                field=FilterableField.JIRA_KEY, operator=FilterOperator.EQUALS, value=key
             )
             assert filter_val.value == key
 
@@ -130,9 +108,7 @@ class TestFilterValueValidation:
         for key in invalid_keys:
             with pytest.raises(ValueError, match="Invalid JIRA key format"):
                 FilterValue(
-                    field=FilterableField.JIRA_KEY,
-                    operator=FilterOperator.EQUALS,
-                    value=key
+                    field=FilterableField.JIRA_KEY, operator=FilterOperator.EQUALS, value=key
                 )
 
 
@@ -143,11 +119,13 @@ class TestValidatedFilters:
         """Test that too many filters are rejected for DoS protection."""
         filters = []
         for _i in range(21):  # Exceeds limit of 20
-            filters.append(FilterValue(
-                field=FilterableField.TEST_TYPE,
-                operator=FilterOperator.EQUALS,
-                value="Functional"
-            ))
+            filters.append(
+                FilterValue(
+                    field=FilterableField.TEST_TYPE,
+                    operator=FilterOperator.EQUALS,
+                    value="Functional",
+                )
+            )
 
         with pytest.raises(ValueError, match="Too many filters"):
             ValidatedFilters(filters=filters)
@@ -156,15 +134,11 @@ class TestValidatedFilters:
         """Test conversion to Qdrant filter dictionary."""
         filters = [
             FilterValue(
-                field=FilterableField.TEST_TYPE,
-                operator=FilterOperator.EQUALS,
-                value="Functional"
+                field=FilterableField.TEST_TYPE, operator=FilterOperator.EQUALS, value="Functional"
             ),
             FilterValue(
-                field=FilterableField.PLATFORMS,
-                operator=FilterOperator.IN,
-                value=["web", "mobile"]
-            )
+                field=FilterableField.PLATFORMS, operator=FilterOperator.IN, value=["web", "mobile"]
+            ),
         ]
 
         validated = ValidatedFilters(filters=filters)
@@ -180,11 +154,7 @@ class TestFilterSanitization:
 
     def test_valid_filters_pass(self):
         """Test that valid filters pass sanitization."""
-        filters = {
-            "testType": "Functional",
-            "priority": "High",
-            "platforms": ["web", "mobile"]
-        }
+        filters = {"testType": "Functional", "priority": "High", "platforms": ["web", "mobile"]}
 
         result = validate_and_sanitize_filters(filters)
 
@@ -195,10 +165,7 @@ class TestFilterSanitization:
 
     def test_invalid_field_rejected(self):
         """Test that invalid fields are rejected."""
-        filters = {
-            "malicious_field": "value",
-            "testType": "Functional"
-        }
+        filters = {"malicious_field": "value", "testType": "Functional"}
 
         with pytest.raises(ValueError, match="Invalid filter field"):
             validate_and_sanitize_filters(filters)
@@ -210,9 +177,7 @@ class TestFilterSanitization:
 
     def test_contains_operator_handling(self):
         """Test that contains operator is handled correctly."""
-        filters = {
-            "folderStructure__contains": "API"
-        }
+        filters = {"folderStructure__contains": "API"}
 
         result = validate_and_sanitize_filters(filters)
 
@@ -225,10 +190,7 @@ class TestBuildFilterSecurity:
 
     def test_build_filter_with_valid_input(self):
         """Test build_filter with valid input."""
-        filters = {
-            "testType": "Functional",
-            "platforms": ["web"]
-        }
+        filters = {"testType": "Functional", "platforms": ["web"]}
 
         result = build_filter(filters)
 
@@ -237,19 +199,15 @@ class TestBuildFilterSecurity:
 
     def test_build_filter_with_invalid_input_raises_error(self):
         """Test that build_filter raises error for invalid input."""
-        filters = {
-            "malicious_field": "<script>alert('xss')</script>"
-        }
+        filters = {"malicious_field": "<script>alert('xss')</script>"}
 
         with pytest.raises(ValueError, match="Invalid filter parameters"):
             build_filter(filters)
 
-    @patch('src.service.main.logger')
+    @patch("src.service.main.logger")
     def test_build_filter_logs_security_violations(self, mock_logger):
         """Test that security violations are logged."""
-        filters = {
-            "malicious_field": "dangerous_value"
-        }
+        filters = {"malicious_field": "dangerous_value"}
 
         with pytest.raises(ValueError):
             build_filter(filters)
@@ -275,15 +233,12 @@ class TestSearchRequestValidation:
             "<script>alert('xss')</script>",
             "query with 'quotes",
             'query with "quotes',
-            "query & ampersand"
+            "query & ampersand",
         ]
 
         for query in dangerous_queries:
             with pytest.raises(ValueError, match="dangerous characters"):
-                SearchRequest(
-                    query=query,
-                    top_k=10
-                )
+                SearchRequest(query=query, top_k=10)
 
     def test_sql_injection_patterns_rejected(self):
         """Test that SQL injection patterns are rejected."""
@@ -292,15 +247,12 @@ class TestSearchRequestValidation:
             "test UNION SELECT * FROM users",
             "test'; DROP TABLE tests; --",
             "test /* comment */ SELECT",
-            "test query INSERT INTO"
+            "test query INSERT INTO",
         ]
 
         for query in sql_queries:
             with pytest.raises(ValueError, match="(dangerous characters|dangerous SQL patterns)"):
-                SearchRequest(
-                    query=query,
-                    top_k=10
-                )
+                SearchRequest(query=query, top_k=10)
 
     def test_valid_query_passes(self):
         """Test that valid queries pass validation."""
@@ -308,14 +260,11 @@ class TestSearchRequestValidation:
             "login functionality test",
             "API authentication flow",
             "user registration process",
-            "payment gateway integration"
+            "payment gateway integration",
         ]
 
         for query in valid_queries:
-            request = SearchRequest(
-                query=query,
-                top_k=10
-            )
+            request = SearchRequest(query=query, top_k=10)
             assert request.query == query.strip()
 
 

@@ -21,9 +21,12 @@ import sys
 
 def _mock_limiter_decorator(*args, **kwargs):
     """Mock limiter decorator that passes through the function unchanged."""
+
     def decorator(func):
         return func
+
     return decorator
+
 
 # Create a mock slowapi module
 mock_slowapi = MagicMock()
@@ -34,9 +37,9 @@ mock_slowapi.errors.RateLimitExceeded = Exception
 mock_slowapi.util.get_remote_address = MagicMock(return_value="127.0.0.1")
 
 # Inject mock into sys.modules before any real imports
-sys.modules['slowapi'] = mock_slowapi
-sys.modules['slowapi.errors'] = mock_slowapi.errors
-sys.modules['slowapi.util'] = mock_slowapi.util
+sys.modules["slowapi"] = mock_slowapi
+sys.modules["slowapi.errors"] = mock_slowapi.errors
+sys.modules["slowapi.util"] = mock_slowapi.util
 
 
 @pytest.fixture(scope="session")
@@ -131,12 +134,14 @@ def mock_async_embedding_provider():
     mock_embedder.embed = AsyncMock(side_effect=smart_embed)
     mock_embedder.embed_batch = AsyncMock(return_value=[[[0.1] * 3072], [[0.2] * 3072]])
     mock_embedder.get_dimension = AsyncMock(return_value=3072)
-    mock_embedder.get_stats = MagicMock(return_value={
-        "provider": "MockEmbedder",
-        "model": "test-model",
-        "embed_count": 0,
-        "total_tokens": 0
-    })
+    mock_embedder.get_stats = MagicMock(
+        return_value={
+            "provider": "MockEmbedder",
+            "model": "test-model",
+            "embed_count": 0,
+            "total_tokens": 0,
+        }
+    )
     mock_embedder.close = AsyncMock()
     return mock_embedder
 
@@ -158,15 +163,15 @@ def sample_test_data():
                     {
                         "index": 1,
                         "action": "Navigate to login page",
-                        "result": "Login page is displayed"
+                        "result": "Login page is displayed",
                     },
                     {
                         "index": 2,
                         "action": "Enter valid credentials",
-                        "result": "User is logged in successfully"
-                    }
+                        "result": "User is logged in successfully",
+                    },
                 ]
-            }
+            },
         },
         "api": {
             "jiraKey": "API-5678",
@@ -180,10 +185,10 @@ def sample_test_data():
             "steps": [
                 {
                     "action": "POST /api/login with valid credentials",
-                    "expected": ["200 OK", "JWT token returned"]
+                    "expected": ["200 OK", "JWT token returned"],
                 }
-            ]
-        }
+            ],
+        },
     }
 
 
@@ -199,25 +204,41 @@ def mock_container(mock_qdrant_client, mock_async_embedding_provider):
     # add to the _instances dict using string keys to match the application's usage.
 
     # Register mocked services using string keys (matching production usage)
-    container._instances['qdrant_client'] = mock_qdrant_client
-    container._instances['embedder'] = mock_async_embedding_provider
+    container._instances["qdrant_client"] = mock_qdrant_client
+    container._instances["embedder"] = mock_async_embedding_provider
 
     # Mock path validator - should raise PathValidationError for dangerous paths
     from src.security import PathValidationError
 
     def mock_path_validator_func(path):
         # Simulate real path validation behavior
-        dangerous_patterns = ["..", "~", "file://", "http://", "https://", "ftp://", "|", ";", "&", "`", "$(", "${"]
+        dangerous_patterns = [
+            "..",
+            "~",
+            "file://",
+            "http://",
+            "https://",
+            "ftp://",
+            "|",
+            ";",
+            "&",
+            "`",
+            "$(",
+            "${",
+        ]
         for pattern in dangerous_patterns:
             if pattern in path:
                 raise PathValidationError(f"Path contains dangerous pattern: {pattern}")
 
         # Check file extension for .json files
-        if not path.lower().endswith('.json'):
-            raise PathValidationError(f"File extension '{path.split('.')[-1] if '.' in path else 'none'}' not allowed")
+        if not path.lower().endswith(".json"):
+            raise PathValidationError(
+                f"File extension '{path.split('.')[-1] if '.' in path else 'none'}' not allowed"
+            )
 
         # Return a mock path object that exists
         from pathlib import Path
+
         mock_path = MagicMock(spec=Path)
         mock_path.exists.return_value = True
 
@@ -228,16 +249,16 @@ def mock_container(mock_qdrant_client, mock_async_embedding_provider):
 
         return mock_path
 
-    container._instances['path_validator'] = mock_path_validator_func
+    container._instances["path_validator"] = mock_path_validator_func
 
     mock_jira_validator = MagicMock()
     mock_jira_validator.return_value = "TEST-123"  # Valid JIRA key
-    container._instances['jira_validator'] = mock_jira_validator
+    container._instances["jira_validator"] = mock_jira_validator
 
     # Mock rate limiter
     mock_rate_limiter = MagicMock()
     mock_rate_limiter.limit.return_value = lambda f: f  # Passthrough decorator
-    container._instances['rate_limiter'] = mock_rate_limiter
+    container._instances["rate_limiter"] = mock_rate_limiter
 
     return container
 
@@ -298,8 +319,8 @@ class TestHelpers:
                 "jiraKey": f"TEST-{uid}",
                 "title": f"Test {uid}",
                 "testType": "Functional",
-                "priority": "Medium"
-            }
+                "priority": "Medium",
+            },
         )
 
     @staticmethod
@@ -320,9 +341,9 @@ class TestHelpers:
                 {
                     "stepNumber": 1,
                     "action": f"Action for {uid}",
-                    "expected": [f"Expected result for {uid}"]
+                    "expected": [f"Expected result for {uid}"],
                 }
-            ]
+            ],
         }
 
 

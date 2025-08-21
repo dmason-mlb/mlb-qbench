@@ -1,13 +1,12 @@
 -- MLB QBench PostgreSQL Schema with pgvector support
--- Supports 104k+ test cases with 3072-dimension OpenAI embeddings
+-- Optimized for text-embedding-3-small (1536 dimensions) with full indexing support
+-- Cleaned up version removing unused code and commented sections
 
 -- Enable required extensions
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm; -- For text search optimization
 
 -- Drop existing tables if they exist (for clean setup)
-DROP TABLE IF EXISTS test_related_issues CASCADE;
-DROP TABLE IF EXISTS test_preconditions CASCADE;
 DROP TABLE IF EXISTS test_steps CASCADE;
 DROP TABLE IF EXISTS test_documents CASCADE;
 
@@ -21,8 +20,8 @@ CREATE TABLE test_documents (
     description TEXT,
     summary TEXT,
     
-    -- Vector embedding for document-level search (OpenAI text-embedding-3-large)
-    embedding vector(3072),
+    -- Vector embedding for document-level search (OpenAI text-embedding-3-small)
+    embedding vector(1536),
     
     -- Metadata fields
     test_type VARCHAR(50),
@@ -57,26 +56,10 @@ CREATE TABLE test_steps (
     data TEXT,
     
     -- Vector embedding for step-level search
-    embedding vector(3072),
+    embedding vector(1536),
     
     -- Ensure unique steps per test
     UNIQUE(test_document_id, step_index)
-);
-
--- Preconditions as separate table for flexibility
-CREATE TABLE test_preconditions (
-    id SERIAL PRIMARY KEY,
-    test_document_id INTEGER NOT NULL REFERENCES test_documents(id) ON DELETE CASCADE,
-    condition TEXT NOT NULL,
-    order_index INTEGER DEFAULT 0
-);
-
--- Related issues for traceability
-CREATE TABLE test_related_issues (
-    id SERIAL PRIMARY KEY,
-    test_document_id INTEGER NOT NULL REFERENCES test_documents(id) ON DELETE CASCADE,
-    issue_key VARCHAR(50) NOT NULL,
-    issue_type VARCHAR(50)
 );
 
 -- Create indexes for performance
@@ -101,38 +84,20 @@ CREATE INDEX idx_test_docs_description_trgm ON test_documents USING GIN(descript
 -- JSONB index for custom fields
 CREATE INDEX idx_test_docs_custom_fields ON test_documents USING GIN(custom_fields);
 
--- Vector indexes will be created after data ingestion
--- Both HNSW and IVFFlat have a 2000 dimension limit in pgvector 0.8.0
--- For 3072-dimensional vectors, we'll use sequential scan initially
--- and add indexes after checking pgvector updates or using dimension reduction
+-- Vector indexes - HNSW for fast approximate nearest neighbor search
+CREATE INDEX idx_test_docs_embedding ON test_documents 
+    USING hnsw (embedding vector_cosine_ops)
+    WITH (m = 16, ef_construction = 64);
 
--- Placeholder indexes commented out for now:
--- CREATE INDEX idx_test_docs_embedding ON test_documents 
---     USING ivfflat (embedding vector_cosine_ops)
---     WITH (lists = 300);
--- 
--- CREATE INDEX idx_test_steps_embedding ON test_steps 
---     USING ivfflat (embedding vector_cosine_ops)
---     WITH (lists = 300);
-
--- Partitioning for test_steps if needed (for 100k+ tests)
--- Uncomment and modify if performance requires it
-/*
-CREATE TABLE test_steps_partition_1 PARTITION OF test_steps
-    FOR VALUES FROM (1) TO (50000);
-
-CREATE TABLE test_steps_partition_2 PARTITION OF test_steps
-    FOR VALUES FROM (50000) TO (100000);
-
-CREATE TABLE test_steps_partition_3 PARTITION OF test_steps
-    FOR VALUES FROM (100000) TO (150000);
-*/
+CREATE INDEX idx_test_steps_embedding ON test_steps 
+    USING hnsw (embedding vector_cosine_ops)
+    WITH (m = 16, ef_construction = 64);
 
 -- Helper functions for search operations
 
 -- Function to perform hybrid search combining vector similarity and metadata filters
 CREATE OR REPLACE FUNCTION hybrid_search(
-    query_embedding vector(3072),
+    query_embedding vector(1536),
     filter_priority TEXT DEFAULT NULL,
     filter_tags TEXT[] DEFAULT NULL,
     filter_platforms TEXT[] DEFAULT NULL,
@@ -177,7 +142,7 @@ $$ LANGUAGE plpgsql;
 
 -- Function for similarity search on test steps
 CREATE OR REPLACE FUNCTION search_steps(
-    query_embedding vector(3072),
+    query_embedding vector(1536),
     search_limit INTEGER DEFAULT 10
 )
 RETURNS TABLE (
@@ -208,7 +173,7 @@ CREATE OR REPLACE FUNCTION upsert_test_document(
     p_test_case_id INTEGER,
     p_uid VARCHAR,
     p_title TEXT,
-    p_embedding vector(3072),
+    p_embedding vector(1536),
     p_jira_key VARCHAR DEFAULT NULL,
     p_description TEXT DEFAULT NULL,
     p_summary TEXT DEFAULT NULL,
@@ -272,8 +237,3 @@ CREATE TRIGGER update_test_documents_updated_at
     BEFORE UPDATE ON test_documents 
     FOR EACH ROW 
     EXECUTE FUNCTION update_updated_at_column();
-
--- Grant permissions (adjust as needed for your setup)
--- GRANT ALL ON ALL TABLES IN SCHEMA public TO your_app_user;
--- GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO your_app_user;
--- GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO your_app_user;

@@ -395,12 +395,16 @@ class TestRailMigrator:
 async def main():
     """Main migration entry point."""
     import argparse
+    from dotenv import load_dotenv
+    
+    # Load environment variables from .env file
+    load_dotenv()
     
     parser = argparse.ArgumentParser(description="Migrate TestRail data to PostgreSQL")
     parser.add_argument("--sqlite-path", default="testrail_data.db",
                        help="Path to TestRail SQLite database")
     parser.add_argument("--postgres-dsn", 
-                       default=os.getenv("DATABASE_URL", "postgresql://postgres@localhost/mlb_qbench"),
+                       default=os.getenv("DATABASE_URL", "postgresql://douglas.mason@localhost/mlb_qbench"),
                        help="PostgreSQL connection string")
     parser.add_argument("--batch-size", type=int, default=100,
                        help="Batch size for processing")

@@ -17,10 +17,12 @@ postgres-setup: ## Set up PostgreSQL with pgvector extension
 	./scripts/setup_postgres.sh
 
 postgres-schema: ## Create PostgreSQL schema and indexes
-	@echo "Creating PostgreSQL schema..."
-	psql -U postgres -d mlb_qbench -f sql/create_schema.sql
+	@echo "Creating PostgreSQL schema (1536 dimensions for text-embedding-3-small)..."
+	psql -U postgres -d mlb_qbench -f sql/create_schema_optimized.sql
 
-migrate-test: ## Test migration with 100 records
+migrate-test: ## Test migration with 100 records (clears DB first)
+	@echo "Clearing database..."
+	@python scripts/clear_db.py
 	@echo "Running test migration (100 records)..."
 	python scripts/migrate_from_sqlite.py --limit 100
 
@@ -29,9 +31,27 @@ migrate-full: ## Run full migration of all 104k test cases
 	@echo "This will take 2-4 hours and use OpenAI API quota..."
 	./scripts/run_full_migration.sh
 
+migrate-optimized: ## Run optimized migration (recommended for full dataset)
+	@echo "Running optimized migration with improved performance..."
+	python scripts/migrate_optimized.py --batch-size 500 --checkpoint-interval 5000
+
 migrate-resume: ## Resume migration from a specific test ID
 	@read -p "Enter the test ID to resume from: " resume_id; \
 	python scripts/migrate_from_sqlite.py --resume-from $$resume_id
+
+migrate-resume-optimized: ## Resume optimized migration from checkpoint
+	@read -p "Enter the test ID to resume from (or press Enter to auto-detect): " resume_id; \
+	if [ -z "$$resume_id" ]; then \
+		resume_id=$$(python3 -c "import asyncio, os; from dotenv import load_dotenv; load_dotenv(); import asyncpg; print(asyncio.run(asyncpg.connect(os.getenv('DATABASE_URL')).fetchval('SELECT MAX(test_case_id) FROM test_documents')))"); \
+	fi; \
+	python scripts/migrate_optimized.py --resume-from $$resume_id --batch-size 500 --checkpoint-interval 5000
+
+migrate-restart: ## Interactive tool to restart migration
+	./scripts/restart_migration.sh
+
+remigrate-failed: ## Re-migrate tests that failed during initial migration
+	@echo "Re-migrating failed tests with fixed TestDoc model..."
+	python scripts/remigrate_failed.py
 
 postgres-clean: ## Drop and recreate PostgreSQL database
 	@echo "Dropping and recreating database..."
@@ -40,15 +60,22 @@ postgres-clean: ## Drop and recreate PostgreSQL database
 	psql -U postgres -d mlb_qbench -c "CREATE EXTENSION vector;"
 	make postgres-schema
 
+switch-embeddings: ## Switch to text-embedding-3-small for pgvector compatibility
+	./scripts/switch_to_small_embeddings.sh
+
+db-clear: ## Clear all data from PostgreSQL tables (keeps schema)
+	@echo "Clearing all data from database tables..."
+	@python scripts/clear_db.py
+
 # API development
 dev: ## Start API server with PostgreSQL
 	@echo "Starting API server with PostgreSQL..."
 	@echo "Note: Set DATABASE_URL, EMBED_PROVIDER, and API keys in .env"
-	uvicorn src.service.main:app --reload --host 0.0.0.0 --port 8000
+	uvicorn src.service.main_postgres:app --reload --host 0.0.0.0 --port 8000
 
 stop: ## Stop all services
 	docker-compose down
-	@pkill -f "uvicorn main:app" || true
+	@pkill -f "uvicorn main" || true
 
 clean: stop ## Stop services and clean data
 	rm -rf .pytest_cache
@@ -72,14 +99,14 @@ search: ## Run example search queries
 
 lint: ## Run linting and type checks
 	ruff check src/ tests/
-	mypy src/
+	mypy src/ --exclude src/mcp/
 
 format: ## Format code with black
 	black src/ tests/
 	ruff check --fix src/ tests/
 
-api-dev: ## Start API server
-	uvicorn src.service.main:app --reload --host 0.0.0.0 --port 8000
+api-dev: ## Start API server (PostgreSQL)
+	uvicorn src.service.main_postgres:app --reload --host 0.0.0.0 --port 8000
 
 check-env: ## Verify environment variables
 	@python -c "from dotenv import load_dotenv; load_dotenv(); import os; print('EMBED_PROVIDER:', os.getenv('EMBED_PROVIDER', 'NOT SET'))"

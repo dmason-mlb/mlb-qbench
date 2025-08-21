@@ -264,46 +264,96 @@ install_dependencies() {
     # Check if project dependencies are already installed
     if $python_cmd -c "import src.mcp.server" 2>/dev/null; then
         print_success "Dependencies already installed"
-        return 0
-    fi
-
-    echo ""
-    print_info "Setting up MLB QBench MCP Server..."
-    echo "Installing required components:"
-    echo "  • FastMCP protocol library"
-    echo "  • Qdrant vector database client"
-    echo "  • OpenAI/Cohere/Vertex embedding providers"
-    echo "  • FastAPI and async components"
-    echo ""
-
-    # Use uv to install from pyproject.toml
-    local install_cmd="$python_cmd -m uv sync --all-extras"
-
-    echo -n "Downloading packages..."
-    local install_output
-
-    # Capture both stdout and stderr
-    install_output=$($install_cmd 2>&1)
-    local exit_code=$?
-
-    if [[ $exit_code -ne 0 ]]; then
-        echo -e "\r${RED}✗ Setup failed${NC}                      "
-        echo ""
-        echo "Installation error:"
-        echo "$install_output" | head -20
-        echo ""
-        echo "Try running manually:"
-        echo "  $python_cmd -m uv sync --all-extras"
-        return 1
     else
-        echo -e "\r${GREEN}✓ Setup complete!${NC}                    "
-        return 0
+        echo ""
+        print_info "Setting up MLB QBench MCP Server..."
+        echo "Installing required components:"
+        echo "  • MCP protocol library"
+        echo "  • PostgreSQL with pgvector support"
+        echo "  • AsyncPG for PostgreSQL connections"
+        echo "  • OpenAI/Cohere/Vertex embedding providers"
+        echo "  • FastAPI and async components"
+        echo ""
+
+        # Use uv to install from pyproject.toml
+        local install_cmd="$python_cmd -m uv sync --all-extras"
+
+        echo -n "Downloading packages..."
+        local install_output
+
+        # Capture both stdout and stderr
+        install_output=$($install_cmd 2>&1)
+        local exit_code=$?
+
+        if [[ $exit_code -ne 0 ]]; then
+            echo -e "\r${RED}✗ Setup failed${NC}                      "
+            echo ""
+            echo "Installation error:"
+            echo "$install_output" | head -20
+            echo ""
+            echo "Try running manually:"
+            echo "  $python_cmd -m uv sync --all-extras"
+            return 1
+        else
+            echo -e "\r${GREEN}✓ Setup complete!${NC}                    "
+        fi
     fi
+
+    # Ensure asyncpg is installed for PostgreSQL support
+    if ! $python_cmd -m pip show asyncpg &>/dev/null; then
+        print_info "Installing asyncpg for PostgreSQL support..."
+        $python_cmd -m pip install -q asyncpg
+        print_success "asyncpg installed"
+    fi
+
+    return 0
 }
 
 # ----------------------------------------------------------------------------
 # Environment Configuration Functions
 # ----------------------------------------------------------------------------
+
+# Create the MCP server wrapper script
+create_mcp_wrapper() {
+    local wrapper_path="run_mcp_server.py"
+    
+    if [[ -f "$wrapper_path" ]]; then
+        print_success "MCP wrapper script already exists"
+        return 0
+    fi
+    
+    print_info "Creating MCP server wrapper script..."
+    
+    cat > "$wrapper_path" << 'EOF'
+#!/usr/bin/env python
+"""Direct runner for MCP server that handles imports properly."""
+
+import asyncio
+import sys
+import os
+
+# Add the project root to Python path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Configure structlog to use stderr for ALL modules
+# This must be done before importing any modules that use structlog
+import structlog
+structlog.configure(
+    logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
+)
+
+from src.mcp.server_postgres import main
+
+if __name__ == "__main__":
+    asyncio.run(main())
+EOF
+    
+    # Make the wrapper executable
+    chmod +x "$wrapper_path"
+    
+    print_success "Created MCP wrapper script: $wrapper_path"
+    return 0
+}
 
 # Setup .env file
 setup_env_file() {
@@ -317,13 +367,13 @@ setup_env_file() {
     cat > .env << 'EOF'
 # MLB QBench Configuration
 
-# Qdrant Configuration
-QDRANT_URL=http://localhost:6533    # Custom port to avoid conflicts
+# PostgreSQL Configuration
+DATABASE_URL=postgresql://username@localhost/mlb_qbench
 
 # Embedding Provider Configuration
 # Choose one provider and configure its settings
 EMBED_PROVIDER=openai               # Options: openai, cohere, vertex, azure
-EMBED_MODEL=text-embedding-3-large  # Model varies by provider
+EMBED_MODEL=text-embedding-3-small  # 1536 dimensions for pgvector compatibility
 
 # Provider API Keys (set the one you're using)
 # OPENAI_API_KEY=your-key-here
@@ -358,6 +408,10 @@ parse_env_safely() {
 
         # Validate key format (only allow alphanumeric and underscore)
         if [[ $key =~ ^[A-Z0-9_]+$ ]]; then
+            # Remove inline comments from value
+            value=${value%%#*}
+            # Trim whitespace
+            value=$(echo "$value" | xargs)
             # Remove quotes from value if present
             value=${value#\"}
             value=${value%\"}
@@ -375,14 +429,14 @@ validate_config() {
         parse_env_safely
     fi
 
-    # Check for Qdrant configuration
-    if [[ -n "${QDRANT_URL:-}" ]]; then
-        print_success "QDRANT_URL configured"
+    # Check for PostgreSQL configuration
+    if [[ -n "${DATABASE_URL:-}" ]]; then
+        print_success "DATABASE_URL configured"
         has_config=true
     else
         # Default to localhost if not configured
-        export QDRANT_URL="http://localhost:6533"
-        print_info "Using default QDRANT_URL: http://localhost:6533"
+        export DATABASE_URL="postgresql://$(whoami)@localhost/mlb_qbench"
+        print_info "Using default DATABASE_URL: postgresql://$(whoami)@localhost/mlb_qbench"
         has_config=true
     fi
 
@@ -498,8 +552,7 @@ if 'mcpServers' not in config:
 # Check if mlb-qbench server already exists
 new_config = {
     'command': '$python_cmd',
-    'args': '$server_args'.split(','),
-    'cwd': '$(pwd)'
+    'args': ['$server_args'],
 }
 
 if 'mlb-qbench' in config['mcpServers']:
@@ -564,8 +617,7 @@ except Exception as e:
   "mcpServers": {
     "mlb-qbench": {
       "command": "$python_cmd",
-      "args": ["$server_args"],
-      "cwd": "$(pwd)"
+      "args": ["$server_args"]
     }
   }
 }
@@ -579,8 +631,7 @@ EOF
   "mcpServers": {
     "mlb-qbench": {
       "command": "$python_cmd",
-      "args": ["$server_args"],
-      "cwd": "$(pwd)"
+      "args": ["$server_args"]
     }
   }
 }
@@ -599,8 +650,7 @@ EOF
   "mcpServers": {
     "mlb-qbench": {
       "command": "$python_cmd",
-      "args": ["$server_args"],
-      "cwd": "$(pwd)"
+      "args": ["$server_args"]
     }
   }
 }
@@ -672,8 +722,7 @@ display_config_instructions() {
      "mcpServers": {
        "mlb-qbench": {
          "command": "$python_cmd",
-         "args": ["$server_args"],
-         "cwd": "$(pwd)"
+         "args": ["$server_args"]
        }
      }
    }
@@ -696,8 +745,7 @@ EOF
      "mcpServers": {
        "mlb-qbench": {
          "command": "$python_cmd",
-         "args": ["$server_args"],
-         "cwd": "$(pwd)"
+         "args": ["$server_args"]
        }
      }
    }
@@ -730,16 +778,16 @@ display_setup_instructions() {
     print_success "MLB QBench MCP Server is ready to use!"
     echo ""
     print_info "Quick Test:"
-    echo "  $python_cmd -m src.mcp.server"
+    echo "  $python_cmd run_mcp_server.py"
     echo ""
     print_info "With environment file:"
-    echo "  $python_cmd -m src.mcp.server --env-file .env"
+    echo "  $python_cmd run_mcp_server.py --env-file .env"
     echo ""
     print_info "With verbose logging:"
-    echo "  $python_cmd -m src.mcp.server -vv"
+    echo "  $python_cmd run_mcp_server.py -vv"
     echo ""
-    print_info "Start Qdrant (if not running):"
-    echo "  make qdrant-up"
+    print_info "Start PostgreSQL (if not running):"
+    echo "  make postgres-setup"
     echo ""
     print_info "FastMCP CLI:"
     echo "  fastmcp run mlb-qbench"
@@ -788,7 +836,8 @@ main() {
             local python_cmd
             python_cmd=$(find_python) || exit 1
             python_cmd=$(setup_venv "$python_cmd") || exit 1
-            local server_args="-m,src.mcp.server"
+            local wrapper_path="$(pwd)/run_mcp_server.py"
+            local server_args="$wrapper_path"
             display_config_instructions "$python_cmd" "$server_args"
             exit 0
             ;;
@@ -828,21 +877,25 @@ main() {
     # Step 2: Setup environment file
     setup_env_file || exit 1
 
-    # Step 3: Setup Python environment
+    # Step 3: Create MCP wrapper script
+    create_mcp_wrapper || exit 1
+
+    # Step 4: Setup Python environment
     local python_cmd
     python_cmd=$(find_python) || exit 1
     python_cmd=$(setup_venv "$python_cmd") || exit 1
 
-    # Step 4: Install dependencies
+    # Step 5: Install dependencies
     install_dependencies "$python_cmd" || exit 1
 
-    # Step 5: Set server args
-    local server_args="-m,src.mcp.server"
+    # Step 6: Set server args - use the wrapper script
+    local wrapper_path="$(pwd)/run_mcp_server.py"
+    local server_args="$wrapper_path"
 
-    # Step 6: Display setup instructions
+    # Step 7: Display setup instructions
     display_setup_instructions "$python_cmd" "$server_args"
 
-    # Step 7: Validate configuration (but don't fail if not configured yet)
+    # Step 8: Validate configuration (but don't fail if not configured yet)
     echo ""
     print_info "Checking configuration..."
     if validate_config; then
@@ -851,10 +904,10 @@ main() {
         print_warning "Please configure your embedding provider credentials in .env before using the server"
     fi
 
-    # Step 8: Check Claude Desktop integration
+    # Step 9: Check Claude Desktop integration
     check_claude_desktop_integration "$python_cmd" "$server_args"
 
-    # Step 9: Check Cursor IDE integration
+    # Step 10: Check Cursor IDE integration
     check_cursor_ide_integration "$python_cmd" "$server_args"
 
     echo ""

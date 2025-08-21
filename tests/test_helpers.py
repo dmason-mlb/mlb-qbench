@@ -42,8 +42,7 @@ class MockQdrantResponses:
 
     @staticmethod
     def create_search_response(
-        results: list[dict[str, Any]],
-        collection_name: str = "test_docs"
+        results: list[dict[str, Any]], collection_name: str = "test_docs"
     ) -> list[ScoredPoint]:
         """Create a mock search response."""
         scored_points = []
@@ -52,15 +51,14 @@ class MockQdrantResponses:
                 id=result.get("uid", f"test-{i}"),
                 score=result.get("score", 0.8),
                 payload=result,
-                version=1
+                version=1,
             )
             scored_points.append(point)
         return scored_points
 
     @staticmethod
     def create_scroll_response(
-        results: list[dict[str, Any]],
-        next_page_offset: Optional[str] = None
+        results: list[dict[str, Any]], next_page_offset: Optional[str] = None
     ) -> tuple:
         """Create a mock scroll response."""
         points = []
@@ -68,7 +66,7 @@ class MockQdrantResponses:
             point = PointStruct(
                 id=result.get("uid", f"test-{i}"),
                 payload=result,
-                vector=result.get("vector", [0.1] * 3072)
+                vector=result.get("vector", [0.1] * 3072),
             )
             points.append(point)
         return points, next_page_offset
@@ -84,13 +82,8 @@ class MockQdrantResponses:
             points_count=1000,
             segments_count=1,
             config=MagicMock(
-                params=MagicMock(
-                    vectors=MagicMock(
-                        size=3072,
-                        distance=Distance.COSINE
-                    )
-                )
-            )
+                params=MagicMock(vectors=MagicMock(size=3072, distance=Distance.COSINE))
+            ),
         )
 
 
@@ -98,10 +91,7 @@ class MockEmbeddingResponses:
     """Factory for creating mock embedding responses."""
 
     @staticmethod
-    def create_embedding_response(
-        texts: list[str],
-        dimension: int = 3072
-    ) -> list[list[float]]:
+    def create_embedding_response(texts: list[str], dimension: int = 3072) -> list[list[float]]:
         """Create mock embeddings for given texts."""
         embeddings = []
         for _i, text in enumerate(texts):
@@ -118,18 +108,15 @@ class MockEmbeddingResponses:
 
         data = []
         for i, embedding in enumerate(embeddings):
-            data.append(MagicMock(
-                embedding=embedding,
-                index=i
-            ))
+            data.append(MagicMock(embedding=embedding, index=i))
 
         return MagicMock(
             data=data,
             model="text-embedding-3-large",
             usage=MagicMock(
                 prompt_tokens=sum(len(text.split()) for text in texts),
-                total_tokens=sum(len(text.split()) for text in texts)
-            )
+                total_tokens=sum(len(text.split()) for text in texts),
+            ),
         )
 
 
@@ -140,10 +127,7 @@ class AsyncPatcher:
         self.patches = []
 
     def patch_async_method(
-        self,
-        target: str,
-        return_value: Any = None,
-        side_effect: Any = None
+        self, target: str, return_value: Any = None, side_effect: Any = None
     ) -> AsyncMock:
         """Patch an async method with AsyncMock."""
         mock = AsyncMock()
@@ -187,6 +171,7 @@ class AsyncTestClient:
 
     async def __aenter__(self):
         from httpx import AsyncClient
+
         self._client = AsyncClient(app=self.app, base_url="http://test")
         return self._client
 
@@ -211,11 +196,13 @@ class PerformanceTimer:
 
     async def __aenter__(self):
         import time
+
         self.start_time = time.perf_counter()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         import time
+
         self.end_time = time.perf_counter()
 
     @property
@@ -228,10 +215,13 @@ class PerformanceTimer:
 
 def async_timeout(seconds: float):
     """Decorator to timeout async tests."""
+
     def decorator(func):
         async def wrapper(*args, **kwargs):
             return await asyncio.wait_for(func(*args, **kwargs), timeout=seconds)
+
         return wrapper
+
     return decorator
 
 
@@ -270,7 +260,7 @@ def create_async_mock_with_spec(spec_class):
     # Add common async methods that might be called
     for attr_name in dir(spec_class):
         attr = getattr(spec_class, attr_name)
-        if callable(attr) and not attr_name.startswith('_'):
+        if callable(attr) and not attr_name.startswith("_"):
             setattr(mock, attr_name, AsyncMock())
 
     return mock
@@ -282,12 +272,12 @@ class TestDataBuilder:
     def __init__(self):
         self.data = {}
 
-    def with_field(self, key: str, value: Any) -> 'TestDataBuilder':
+    def with_field(self, key: str, value: Any) -> "TestDataBuilder":
         """Add a field to the test data."""
         self.data[key] = value
         return self
 
-    def with_defaults(self, defaults: dict[str, Any]) -> 'TestDataBuilder':
+    def with_defaults(self, defaults: dict[str, Any]) -> "TestDataBuilder":
         """Set default values for test data."""
         for key, value in defaults.items():
             if key not in self.data:
@@ -302,59 +292,52 @@ class TestDataBuilder:
 # Common test data builders
 def functional_test_builder() -> TestDataBuilder:
     """Create a builder for functional test data."""
-    return TestDataBuilder().with_defaults({
-        "issueKey": "FUNC-123",
-        "testCaseId": "tc_func_123",
-        "summary": "Test summary",
-        "labels": ["test"],
-        "priority": "Medium",
-        "folder": "/Test",
-        "platforms": ["web"],
-        "testScript": {
-            "steps": [
-                {
-                    "index": 1,
-                    "action": "Test action",
-                    "result": "Test result"
-                }
-            ]
+    return TestDataBuilder().with_defaults(
+        {
+            "issueKey": "FUNC-123",
+            "testCaseId": "tc_func_123",
+            "summary": "Test summary",
+            "labels": ["test"],
+            "priority": "Medium",
+            "folder": "/Test",
+            "platforms": ["web"],
+            "testScript": {
+                "steps": [{"index": 1, "action": "Test action", "result": "Test result"}]
+            },
         }
-    })
+    )
 
 
 def api_test_builder() -> TestDataBuilder:
     """Create a builder for API test data."""
-    return TestDataBuilder().with_defaults({
-        "jiraKey": "API-123",
-        "testCaseId": "tc_api_123",
-        "title": "API test",
-        "testType": "API",
-        "priority": "Medium",
-        "platforms": ["api"],
-        "folderStructure": "API/Test",
-        "tags": ["api"],
-        "steps": [
-            {
-                "action": "API call",
-                "expected": ["200 OK"]
-            }
-        ]
-    })
+    return TestDataBuilder().with_defaults(
+        {
+            "jiraKey": "API-123",
+            "testCaseId": "tc_api_123",
+            "title": "API test",
+            "testType": "API",
+            "priority": "Medium",
+            "platforms": ["api"],
+            "folderStructure": "API/Test",
+            "tags": ["api"],
+            "steps": [{"action": "API call", "expected": ["200 OK"]}],
+        }
+    )
 
 
 # Export commonly used items
 __all__ = [
-    'AsyncTestCase',
-    'MockQdrantResponses',
-    'MockEmbeddingResponses',
-    'AsyncPatcher',
-    'async_test_client',
-    'PerformanceTimer',
-    'async_timeout',
-    'parametrize_async',
-    'MockAsyncContext',
-    'create_async_mock_with_spec',
-    'TestDataBuilder',
-    'functional_test_builder',
-    'api_test_builder'
+    "AsyncTestCase",
+    "MockQdrantResponses",
+    "MockEmbeddingResponses",
+    "AsyncPatcher",
+    "async_test_client",
+    "PerformanceTimer",
+    "async_timeout",
+    "parametrize_async",
+    "MockAsyncContext",
+    "create_async_mock_with_spec",
+    "TestDataBuilder",
+    "functional_test_builder",
+    "api_test_builder",
 ]

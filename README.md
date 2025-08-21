@@ -1,36 +1,39 @@
 # MLB QBench - Test Retrieval Service
 
-> A high-performance test retrieval service using Qdrant vector database with cloud embeddings for semantic search over test cases
+> A high-performance test retrieval service using PostgreSQL with pgvector extension and cloud embeddings for semantic search over test cases
 
-[![Python](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-green.svg)](https://fastapi.tiangolo.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## Overview
 
-MLB QBench is a local-only test retrieval service that provides semantic search capabilities over test cases using vector embeddings. The system ingests test data from multiple JSON sources, normalizes fields across different formats, and exposes a FastAPI interface for AI-powered test discovery.
+MLB QBench is a test retrieval service that provides semantic search capabilities over test cases using PostgreSQL with pgvector extension. The system ingests test data from multiple sources including TestRail SQLite databases (104k+ tests), normalizes fields across different formats, and exposes a FastAPI interface for AI-powered test discovery.
 
 ### Key Features
 
-- **🚀 Async Architecture**: Fully async FastAPI service with concurrent processing and batch operations
-- **🔍 Dual Collection Search**: Separate collections for document-level and step-level semantic search
-- **🤖 Multi-Provider Embeddings**: Support for OpenAI, Cohere, Vertex AI, and Azure with intelligent batching
-- **⚡ High Performance**: ~50% faster search through concurrent operations, 25x faster ingestion
+- **🚀 PostgreSQL + pgvector**: Scalable vector database with HNSW indexes for 100-1000x faster similarity search
+- **🔍 Dual Table Design**: Separate tables for document-level and step-level semantic search
+- **🤖 Optimized Embeddings**: OpenAI text-embedding-3-small (1536 dimensions) for 5x cost reduction
+- **⚡ High Performance**: 50+ docs/second migration, <100ms search latency with vector indexes
+- **📦 TestRail Integration**: Direct migration from TestRail SQLite databases (104k+ tests)
 - **🔐 Enterprise Security**: API key authentication, rate limiting, CORS protection, path validation
 - **🧠 AI Integration**: Model Context Protocol (MCP) server for seamless AI assistant integration
 - **📊 Comprehensive Monitoring**: Resource usage tracking and performance metrics
 
 ## Architecture
 
-### Dual Collection Design
+### Dual Table Design
 
-The system uses two Qdrant collections for different search granularities:
+The system uses two PostgreSQL tables with vector columns for different search granularities:
 
-1. **test_docs**: Document-level embeddings containing title + description with full test metadata
-   - Uses auto-incrementing `testId` as primary identifier
-   - JIRA keys are optional and can be updated after test creation
+1. **test_documents**: Document-level embeddings containing title + description with full test metadata
+   - Uses `test_case_id` from TestRail as primary identifier
+   - Test identifiers preserved from TestRail data
+   - HNSW index on 1536-dimension vectors for fast similarity search
 2. **test_steps**: Step-level embeddings for finding tests by specific actions or validations
-   - References parent tests via `parent_test_id`
+   - References parent tests via foreign key to test_documents
+   - Separate HNSW index for step-level search
 
 ### Async Provider-Agnostic Embedding System
 
@@ -49,7 +52,7 @@ mlb-qbench/
 │   │   ├── ingest_api.py    # API test format ingestion
 │   │   └── ingest_functional.py  # Xray functional test ingestion
 │   ├── mcp/                 # Model Context Protocol server
-│   ├── models/              # Pydantic models and Qdrant schema
+│   ├── models/              # Pydantic models and data schemas
 │   ├── security/            # Security utilities and validation
 │   ├── service/             # FastAPI application and endpoints
 │   ├── container.py         # Dependency injection container
@@ -57,7 +60,7 @@ mlb-qbench/
 ├── tests/                   # Comprehensive test suite (11 test files)
 ├── docs/                    # Documentation and schema files
 ├── scripts/                 # Utility and development scripts
-├── docker-compose.yml       # Qdrant database service
+├── docker-compose.yml       # PostgreSQL database service
 ├── Makefile                 # Development workflow automation
 └── pyproject.toml          # Project configuration and dependencies
 ```
@@ -66,9 +69,9 @@ mlb-qbench/
 
 ### Prerequisites
 
-- **Docker & Docker Compose**: For Qdrant vector database
-- **Python 3.9+**: Core runtime requirement
-- **API Key**: For your chosen embedding provider (OpenAI, Cohere, Vertex AI, or Azure)
+- **PostgreSQL 15+**: With pgvector extension for vector similarity search
+- **Python 3.10+**: Core runtime requirement
+- **OpenAI API Key**: For text-embedding-3-small embeddings
 
 ### Installation
 
@@ -93,19 +96,18 @@ mkdir -p data
 ### Development Setup
 
 ```bash
-# Start all services (Qdrant + API)
+# Start API server with PostgreSQL
 make dev
 
-# Or start components separately:
-make qdrant-up                     # Start Qdrant database only
+# Or run directly:
 make api-dev                       # Start API server only (port 8000)
 ```
 
 ### Data Operations
 
 ```bash
-# Create/recreate Qdrant collections
-python -m src.models.schema
+# Create PostgreSQL schema
+make postgres-schema
 
 # Ingest test data (requires JSON files in data/ directory)
 make ingest
@@ -122,13 +124,12 @@ Configure your environment by copying `.env.example` to `.env` and setting the r
 ### Core Configuration
 
 ```bash
-# Qdrant Database
-QDRANT_URL=http://localhost:6533          # Custom port to avoid conflicts
-QDRANT_API_KEY=                           # Optional for local Docker instance
+# PostgreSQL Database
+DATABASE_URL=postgresql://username@localhost/mlb_qbench
 
-# Embedding Provider (choose one)
-EMBED_PROVIDER=openai                     # Options: openai, cohere, vertex, azure
-EMBED_MODEL=text-embedding-3-large       # Model varies by provider
+# Embedding Provider
+EMBED_PROVIDER=openai                     # Currently optimized for OpenAI
+EMBED_MODEL=text-embedding-3-small       # 1536 dimensions for pgvector compatibility
 ```
 
 ### Security Configuration
@@ -160,87 +161,91 @@ AZURE_OPENAI_API_KEY=your-azure-key
 AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
 ```
 
-## Qdrant Database Setup
+## PostgreSQL Database Setup
 
-MLB QBench uses Qdrant as its vector database for semantic search capabilities. The system automatically configures two collections optimized for different search patterns.
+MLB QBench uses PostgreSQL with pgvector extension for semantic search capabilities. The system creates optimized tables with HNSW indexes for fast vector similarity search.
 
-### Starting Qdrant
+### Database Setup
 
 ```bash
-# Start Qdrant using Docker Compose
-make qdrant-up
+# Install pgvector extension (macOS with Homebrew)
+brew install pgvector
 
-# Or manually with docker-compose
-docker-compose up -d qdrant
+# Create database and enable extension
+createdb mlb_qbench
+psql -d mlb_qbench -c "CREATE EXTENSION vector;"
 
-# Verify Qdrant is running
-docker ps | grep qdrant
-curl http://localhost:6533/health
+# Create schema with optimized 1536-dimension vectors
+psql -d mlb_qbench < sql/create_schema_1536.sql
 ```
 
-### Qdrant Configuration
+### PostgreSQL Configuration
 
-The system uses these port mappings to avoid conflicts:
-- **REST API**: `localhost:6533` (internal: 6333)
-- **gRPC**: `localhost:6534` (internal: 6334)
-- **Storage**: `./qdrant_storage/` (persistent volume)
+The system uses PostgreSQL with pgvector extension:
+- **Database**: `mlb_qbench` on `localhost:5432`
+- **Extension**: pgvector for similarity search
+- **Storage**: `./postgres_data/` (persistent volume)
 
 ### Collection Architecture
 
 The system automatically creates two optimized collections:
 
-#### 1. `test_docs` - Document-Level Search
+#### 1. `test_documents` - Document-Level Search
 - **Purpose**: Find tests by overall content (title + description)
-- **Vector Size**: 3072 dimensions (OpenAI text-embedding-3-large)
-- **HNSW Config**: `m=32, ef_construct=128` for 10k+ documents
-- **Indexed Fields**: `priority`, `testType`, `platforms`, `tags`, `folderStructure`
+- **Vector Size**: 1536 dimensions (OpenAI text-embedding-3-small)
+- **HNSW Config**: `m=16, ef_construction=64` optimized for 100k+ documents
+- **Indexed Fields**: `test_case_id`, `priority`, `test_type`, `platforms`, `tags`, `folder_structure`
+- **TestRail Fields**: Preserves `suite_id`, `section_id`, `project_id`, `custom_fields`
 
 #### 2. `test_steps` - Step-Level Search  
 - **Purpose**: Find tests by specific actions or validation steps
-- **Vector Size**: 3072 dimensions
-- **Parent Linking**: Each step links to parent document via `parent_uid`
-- **Indexed Fields**: `parent_uid`, `step_index`
+- **Vector Size**: 1536 dimensions
+- **Parent Linking**: Foreign key to test_documents with CASCADE delete
+- **Indexed Fields**: `test_document_id`, `step_index`
 
-### Collection Management
+### Migration from TestRail
 
 ```bash
-# Create/recreate collections (WARNING: deletes existing data)
-python -m src.models.schema
+# Run optimized migration for 104k+ tests
+make migrate-optimized
 
-# Check collection health and stats
-curl -H "X-API-Key: your-key" http://localhost:8000/healthz
+# Or with custom settings
+python scripts/migrate_optimized.py --batch-size 500 --checkpoint-interval 5000
 
-# View collections in Qdrant dashboard (if enabled)
-open http://localhost:6533/dashboard
+# Resume interrupted migration
+make migrate-resume-optimized
+
+# Check migration progress
+tail -f migration.log | grep "Migration progress"
 ```
 
-### Troubleshooting Qdrant
+### Troubleshooting PostgreSQL
 
 **Connection Issues**:
 ```bash
-# Check if Qdrant is running
-docker logs mlb-qbench-qdrant
+# Check if PostgreSQL is running
+pg_isready
+psql -l | grep mlb_qbench
 
-# Restart with clean state
-make clean
-make qdrant-up
+# Check pgvector installation
+psql -d mlb_qbench -c "SELECT * FROM pg_extension WHERE extname = 'vector';"
 ```
 
-**Storage Permission Issues**:
+**Schema Issues**:
+```bash
+# Verify schema exists
+psql -d mlb_qbench -c "\dt"  # Should show test_documents, test_steps tables
+
+# Recreate schema if needed
+make postgres-schema
+```
+
+**Permission Issues**:
 ```bash
 # Fix permissions (macOS/Linux)
-rm -rf qdrant_storage
-mkdir qdrant_storage
-chmod 755 qdrant_storage
-```
-
-**Port Conflicts**:
-```bash
-# Check what's using the ports
-lsof -i :6533
-lsof -i :6534
-
-# Kill conflicting processes or change ports in docker-compose.yml
+rm -rf postgres_data
+mkdir postgres_data
+chmod 755 postgres_data
 ```
 
 ## Test Data Ingestion
@@ -252,7 +257,6 @@ The system supports ingesting test data from standardized JSON formats. All test
 #### 1. Functional Tests (Xray Format)
 ```json
 {
-  "issueKey": "FRAMED-1390",
   "testCaseId": "tc_func_001",
   "testInfo": {
     "summary": "Login functionality test",
@@ -283,7 +287,6 @@ The system supports ingesting test data from standardized JSON formats. All test
 #### 2. API Tests (Normalized Format)
 ```json
 {
-  "jiraKey": "API-5678",
   "testCaseId": "tc_api_001", 
   "title": "User Authentication API",
   "testType": "API",
@@ -311,7 +314,7 @@ The system supports ingesting test data from standardized JSON formats. All test
 ### Required Fields
 
 All test records must include these minimum fields:
-- **`uid`**: Unique identifier (derived from `jiraKey` or `testCaseId`)
+- **`uid`**: Unique identifier (derived from `testCaseId`)
 - **`title`**: Test name/summary 
 - **`source`**: Source filename (auto-generated during ingestion)
 - **`ingested_at`**: Timestamp (auto-generated during ingestion)
@@ -324,7 +327,6 @@ The ingestion process automatically normalizes fields:
 |--------------|--------------|-------|
 | `labels` | `tags` | Unified tagging system |
 | `folder` | `folderStructure` | Path standardization |
-| `issueKey` | `jiraKey` | JIRA key consistency |
 | `testSteps` | `steps` | Step format unification |
 | `expectedResult` | `expected` | Array format |
 | `result` | `expected` | Functional → API format |
@@ -383,18 +385,18 @@ Optimized for datasets under 1,000 documents with high performance:
 2. **Normalization**: Field mapping and data standardization  
 3. **Batch Embedding**: Generate vectors concurrently in batches of 25 texts
 4. **Concurrent Processing**: Process multiple documents simultaneously
-5. **Batch Upsert**: Insert/update in Qdrant with idempotent operations
+5. **Batch Upsert**: Insert/update in PostgreSQL with idempotent operations
 6. **Verification**: Confirm successful ingestion and indexing
 
 **Performance**: ~25x faster through async batch processing
 
 #### 2. Sequential Ingestion (Large Datasets)
 
-Conservative approach for large datasets (5,000+ documents) to prevent Qdrant worker overload:
+Conservative approach for large datasets (5,000+ documents) to prevent database overload:
 
 1. **One-at-a-time Processing**: Sequential embedding generation to minimize load
 2. **Resource Management**: Health checks and controlled delays between batches
-3. **Corruption Prevention**: Avoids concurrent API calls that can overwhelm Qdrant workers
+3. **Corruption Prevention**: Avoids concurrent API calls that can overwhelm the database
 4. **Progress Monitoring**: Built-in progress tracking and recovery mechanisms
 5. **Stability Focus**: Prioritizes data integrity over speed
 
@@ -431,7 +433,7 @@ curl -X POST "http://localhost:8000/ingest" \
 #### Sequential Ingestion (Large Datasets)
 - **Ingestion Speed**: ~1 embedding per second (conservative)
 - **Processing**: One document at a time to prevent overload
-- **Batch Size**: 10 points per Qdrant upsert (with delays)
+- **Batch Size**: 10 records per database insert (with delays)
 - **Memory Usage**: ~50MB constant (minimal buffering)
 - **Recommended For**: >5,000 documents or after corruption issues
 - **Typical Duration**: 15-20 hours for 6,350 documents
@@ -464,15 +466,12 @@ for name, info in health['collections'].items():
 "
 ```
 
-#### Qdrant Corruption Recovery
+#### Database Recovery
 ```bash
-# Signs of corruption: "channel closed" errors, red collection status
+# Signs of issues: connection errors, slow queries
 # Recovery steps:
-make qdrant-down                              # Stop Qdrant
-rm -rf qdrant_storage                         # Clear corrupted data  
-mkdir qdrant_storage && chmod 755 qdrant_storage
-make qdrant-up                                # Restart fresh
-python -m src.models.schema                   # Recreate collections
+make postgres-clean                           # Drop and recreate database
+make postgres-schema                          # Recreate schema
 
 # Use sequential ingestion to prevent recurrence
 python ingest_sequential.py
@@ -536,8 +535,8 @@ curl http://localhost:8000/metrics
 # Find similar tests
 curl http://localhost:8000/similar/{test_uid}
 
-# Direct JIRA key lookup
-curl http://localhost:8000/by-jira/{jira_key}
+# Direct test lookup by ID
+curl http://localhost:8000/by-test/{test_id}
 ```
 
 ## Development Workflow
@@ -570,7 +569,6 @@ make help                              # Show all available commands
 ```bash
 make stop                              # Stop all services
 make clean                             # Stop services and clean all data
-make qdrant-down                       # Stop Qdrant only
 ```
 
 ## AI Integration (MCP)
@@ -598,14 +596,13 @@ make mcp-server
 
 ## Performance Characteristics
 
-- **Search Latency**: Typically <100ms for hybrid search queries
-- **Ingestion Speed**: 
-  - Concurrent: ~25x improvement through async batch processing (small datasets)
-  - Sequential: ~1 embedding/second (large datasets, corruption-resistant)
-- **Memory Usage**: ~500MB RAM for 10k documents in Qdrant
-- **Concurrent Operations**: ~50% faster search through async processing
+- **Search Latency**: <100ms with HNSW indexes (100-1000x faster than sequential scan)
+- **Migration Speed**: 50+ docs/second with optimized batch processing
+- **Embedding Costs**: ~$1.04 for 104k tests with text-embedding-3-small (vs $6.76 with large)
+- **Database Size**: ~2GB for 104k documents with vectors and indexes
+- **Concurrent Operations**: Connection pooling with 20-50 async connections
 - **Rate limits**: 60 requests/minute for search, 5/minute for ingestion
-- **Scalability**: Successfully tested with 6,350+ documents using sequential ingestion
+- **Scalability**: Successfully migrated 104,121 TestRail test cases
 
 ## Testing
 
@@ -627,8 +624,8 @@ pytest tests/ -v --cov=src            # Verbose with coverage
 
 **Docker Permission Errors**:
 ```bash
-rm -rf qdrant_storage && mkdir qdrant_storage
-make qdrant-up
+rm -rf postgres_data && mkdir postgres_data
+docker-compose up -d postgres
 ```
 
 **Module Import Errors**:
@@ -636,11 +633,11 @@ make qdrant-up
 pip install -e .                      # Ensure editable installation
 ```
 
-**Qdrant Connection Failed**:
+**PostgreSQL Connection Failed**:
 ```bash
-docker ps | grep qdrant                # Check if running
-lsof -i :6533                         # Check port availability
-docker logs mlb-qbench-qdrant         # Check Qdrant logs
+docker ps | grep postgres              # Check if running
+lsof -i :5432                         # Check port availability
+docker logs mlb-qbench-postgres       # Check PostgreSQL logs
 ```
 
 **Embedding API Issues**:
@@ -669,6 +666,6 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Acknowledgments
 
-- Built with FastAPI and Qdrant for high-performance vector search
+- Built with FastAPI and PostgreSQL with pgvector for high-performance vector search
 - Supports multiple embedding providers for flexibility
 - Designed for MLB's test discovery and automation needs

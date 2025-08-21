@@ -18,13 +18,13 @@ class TestJiraKeyValidator:
     def test_valid_jira_keys(self, validator):
         """Test validation of valid JIRA keys."""
         valid_keys = [
-            "ABC-123",          # Standard format
-            "PROJ-456",         # Different project
-            "TEST-1",           # Single digit
-            "DEV-99999999",     # Max digits (8)
-            "A1-1",             # Min project length (2)
-            "PROJECT123-1",     # Project with numbers
-            "Z9ABC8DEF7-123456", # Max project length (10)
+            "ABC-123",  # Standard format
+            "PROJ-456",  # Different project
+            "TEST-1",  # Single digit
+            "DEV-99999999",  # Max digits (8)
+            "A1-1",  # Min project length (2)
+            "PROJECT123-1",  # Project with numbers
+            "Z9ABC8DEF7-123456",  # Max project length (10)
         ]
 
         for key in valid_keys:
@@ -54,25 +54,25 @@ class TestJiraKeyValidator:
     def test_dangerous_characters_rejected(self, validator):
         """Test rejection of JIRA keys with dangerous characters."""
         dangerous_keys = [
-            "ABC-123'",         # SQL injection
-            'ABC-123"',         # SQL injection
+            "ABC-123'",  # SQL injection
+            'ABC-123"',  # SQL injection
             "ABC-123<script>",  # XSS
-            "ABC-123>",         # XSS
-            "ABC-123&cmd",      # Command injection
-            "ABC-123|cat",      # Command injection
-            "ABC-123;rm",       # Command injection
-            "ABC-123()",        # Command injection
-            "ABC-123{}",        # Command injection
-            "ABC-123[]",        # Command injection
-            "ABC-123\\",        # Path traversal
-            "ABC-123/",         # Path traversal
-            "ABC-123?",         # URL manipulation
-            "ABC-123#",         # URL fragment
-            "ABC-123%20",       # URL encoding
-            "ABC-123\n",        # CRLF injection
-            "ABC-123\r",        # CRLF injection
-            "ABC-123\t",        # Tab character
-            "ABC-123\x00",      # Null byte
+            "ABC-123>",  # XSS
+            "ABC-123&cmd",  # Command injection
+            "ABC-123|cat",  # Command injection
+            "ABC-123;rm",  # Command injection
+            "ABC-123()",  # Command injection
+            "ABC-123{}",  # Command injection
+            "ABC-123[]",  # Command injection
+            "ABC-123\\",  # Path traversal
+            "ABC-123/",  # Path traversal
+            "ABC-123?",  # URL manipulation
+            "ABC-123#",  # URL fragment
+            "ABC-123%20",  # URL encoding
+            "ABC-123\n",  # CRLF injection
+            "ABC-123\r",  # CRLF injection
+            "ABC-123\t",  # Tab character
+            "ABC-123\x00",  # Null byte
         ]
 
         for key in dangerous_keys:
@@ -82,18 +82,18 @@ class TestJiraKeyValidator:
     def test_invalid_format_rejected(self, validator):
         """Test rejection of JIRA keys with invalid format."""
         invalid_keys = [
-            "abc-123",          # Lowercase project
-            "ABC",              # Missing hyphen and number
-            "ABC-",             # Missing number
-            "-123",             # Missing project
-            "A-123",            # Project too short (1 char)
+            "abc-123",  # Lowercase project
+            "ABC",  # Missing hyphen and number
+            "ABC-",  # Missing number
+            "-123",  # Missing project
+            "A-123",  # Project too short (1 char)
             "ABCDEFGHIJK-123",  # Project too long (11 chars)
-            "ABC-0",            # Number starts with 0
-            "ABC-123456789",    # Number too long (9 digits)
-            "ABC-12A",          # Non-numeric issue number
-            "ABC_123",          # Underscore instead of hyphen
-            "ABC 123",          # Space instead of hyphen
-            "123-ABC",          # Reversed format
+            "ABC-0",  # Number starts with 0
+            "ABC-123456789",  # Number too long (9 digits)
+            "ABC-12A",  # Non-numeric issue number
+            "ABC_123",  # Underscore instead of hyphen
+            "ABC 123",  # Space instead of hyphen
+            "123-ABC",  # Reversed format
         ]
 
         for key in invalid_keys:
@@ -112,7 +112,7 @@ class TestJiraKeyValidator:
         assert validator.is_valid_jira_key_format("ABC-123'") is False
         assert validator.is_valid_jira_key_format("") is False
 
-    @patch('src.security.jira_validator.logger')
+    @patch("src.security.jira_validator.logger")
     def test_security_events_logged(self, mock_logger, validator):
         """Test that security violations are logged."""
         # Test dangerous character logging
@@ -134,7 +134,7 @@ class TestJiraKeyValidator:
         assert "Invalid JIRA key format" in call_args[0][0]
         assert call_args[1]["extra"]["security_event"] is True
 
-    @patch('src.security.jira_validator.logger')
+    @patch("src.security.jira_validator.logger")
     def test_successful_validation_logged(self, mock_logger, validator):
         """Test that successful validations are logged."""
         result = validator.validate_jira_key("ABC-123")
@@ -201,8 +201,8 @@ class TestJiraKeyEdgeCases:
     def test_special_valid_combinations(self, validator):
         """Test special but valid combinations."""
         valid_special = [
-            "A2-1",             # Single letter + number in project
-            "AB2C3-99",         # Mixed alphanumeric project
+            "A2-1",  # Single letter + number in project
+            "AB2C3-99",  # Mixed alphanumeric project
             "TEST123-1234567",  # Max length combinations
         ]
 
@@ -212,10 +212,10 @@ class TestJiraKeyEdgeCases:
     def test_unicode_and_special_encoding(self, validator):
         """Test handling of unicode and special encoding."""
         unicode_keys = [
-            "ABΓ-123",          # Greek letter
-            "AB€-123",          # Euro symbol
-            "AB\u00A0-123",     # Non-breaking space
-            "AB\u2013-123",     # En dash (looks like hyphen)
+            "ABΓ-123",  # Greek letter
+            "AB€-123",  # Euro symbol
+            "AB\u00a0-123",  # Non-breaking space
+            "AB\u2013-123",  # En dash (looks like hyphen)
         ]
 
         for key in unicode_keys:

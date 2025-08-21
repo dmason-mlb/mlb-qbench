@@ -20,7 +20,7 @@ MCP Integration:
 Dependencies:
     - asyncio: Core async runtime for server event loop
     - .server.main: Primary MCP server implementation and initialization
-    
+
 Used by:
     - Claude Desktop: AI assistant integration via MCP client
     - Development tools: IDE extensions and automation scripts
@@ -29,18 +29,18 @@ Used by:
 Usage:
     python -m src.mcp          # Run from project root
     python src/mcp/__main__.py # Direct module execution
-    
+
 Performance:
     - Startup time: <100ms for server initialization
     - Memory usage: ~50MB baseline + embedding provider overhead
     - Concurrent clients: Supports multiple simultaneous connections
-    
+
 Complexity: O(1) - Simple entry point with constant initialization time
 """
 
 import asyncio
 
-from .server import main
+from .server_postgres import main
 
 # Main execution guard: Only run when invoked as primary module
 # Prevents accidental server startup during imports for testing

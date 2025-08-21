@@ -46,36 +46,37 @@ logger = structlog.get_logger()
 
 class JiraKeyValidationError(Exception):
     """Exception raised when JIRA key validation fails.
-    
+
     This exception is raised when any JIRA key validation check fails,
     including format violations, dangerous character detection, length
     limits, or injection attempt detection.
     """
+
     pass
 
 
 class JiraKeyValidator:
     """Validator for JIRA keys to prevent injection attacks and ensure proper format.
-    
+
     This class implements comprehensive security validation for JIRA issue keys:
     - Format compliance with JIRA standards (PROJECT-123 pattern)
     - Injection attack prevention via dangerous character detection
     - DoS protection through length limits
     - Security event logging for monitoring
-    
+
     JIRA Key Format Rules:
         - Project key: 2-10 characters, starts with letter, uppercase letters/numbers only
         - Separator: Single hyphen (-)
         - Issue number: 1-8 digits, cannot start with 0 (1-99999999 range)
         - Total length: Maximum 20 characters
-        
+
     Security Model:
         1. Length validation (DoS prevention)
         2. Dangerous character detection (injection prevention)
         3. Format validation using regex (compliance enforcement)
         4. Project key length validation (additional check)
         5. Security event logging (monitoring)
-    
+
     Performance:
         - Validation: O(n) where n is key length
         - Pattern matching: Single regex operation
@@ -89,30 +90,30 @@ class JiraKeyValidator:
     # [1-9]        - First digit must be 1-9 (not 0)
     # [0-9]{0,7}   - 0-7 additional digits (total 1-8 digits)
     # $            - End of string
-    JIRA_KEY_PATTERN = re.compile(r'^[A-Z][A-Z0-9]{1,9}-[1-9][0-9]{0,7}$')
+    JIRA_KEY_PATTERN = re.compile(r"^[A-Z][A-Z0-9]{1,9}-[1-9][0-9]{0,7}$")
 
     # Maximum length to prevent DoS attacks
     MAX_LENGTH = 20
 
     def __init__(self):
         """Initialize the JIRA key validator.
-        
+
         Creates a new validator instance with predefined security rules.
         No configuration needed as JIRA key format is standardized.
-        
+
         Complexity: O(1) - Simple initialization with no setup required
         """
         pass
 
     def validate_jira_key(self, jira_key: str) -> str:
         """Validate a JIRA key format and content comprehensively.
-        
+
         Performs multi-stage security validation to ensure the JIRA key is:
         - Not empty or oversized (DoS protection)
         - Free of dangerous characters (injection prevention)
         - Compliant with JIRA format standards
         - Has valid project key length
-        
+
         Args:
             jira_key: The JIRA key to validate (e.g., "PROJECT-123")
 
@@ -126,11 +127,11 @@ class JiraKeyValidator:
                 - Dangerous characters detected
                 - Invalid format pattern
                 - Project key too short (<2 chars)
-                
+
         Complexity: O(n) where n is key length
-        
+
         Security Flow:
-            Input → Length Check → Character Scan → Pattern Match → 
+            Input → Length Check → Character Scan → Pattern Match →
             Project Key Check → Output
         """
         # Step 1: Input validation (empty check)
@@ -144,24 +145,35 @@ class JiraKeyValidator:
                 "JIRA key too long",
                 key=jira_key[:20] + "..." if len(jira_key) > 20 else jira_key,
                 length=len(jira_key),
-                extra={"security_event": True}
+                extra={"security_event": True},
             )
             raise JiraKeyValidationError("JIRA key too long")
 
         # Step 3: Dangerous character detection (injection prevention)
         # Comprehensive list of characters that could be used in various attacks
         dangerous_chars = [
-            "'", '"',        # SQL injection quotes
-            "<", ">",        # XSS angle brackets
-            "&", "|",        # Command injection operators
-            ";", "(",        # Command injection delimiters
-            ")", "{",        # Command injection braces
-            "}", "[",        # Command injection brackets
-            "]", "\\",       # Path traversal backslash
-            "/", "?",        # URL manipulation characters
-            "#", "%",        # URL encoding characters
-            "\n", "\r",      # CRLF injection newlines
-            "\t", "\x00"     # Control characters (tab, null)
+            "'",
+            '"',  # SQL injection quotes
+            "<",
+            ">",  # XSS angle brackets
+            "&",
+            "|",  # Command injection operators
+            ";",
+            "(",  # Command injection delimiters
+            ")",
+            "{",  # Command injection braces
+            "}",
+            "[",  # Command injection brackets
+            "]",
+            "\\",  # Path traversal backslash
+            "/",
+            "?",  # URL manipulation characters
+            "#",
+            "%",  # URL encoding characters
+            "\n",
+            "\r",  # CRLF injection newlines
+            "\t",
+            "\x00",  # Control characters (tab, null)
         ]
 
         # Scan for dangerous characters - O(n*c) where n=key length, c=char count
@@ -172,7 +184,7 @@ class JiraKeyValidator:
                     "Dangerous character in JIRA key",
                     key=jira_key,
                     character=repr(char),  # repr() shows escape sequences
-                    extra={"security_event": True}
+                    extra={"security_event": True},
                 )
                 raise JiraKeyValidationError(f"JIRA key contains invalid character: {repr(char)}")
 
@@ -182,7 +194,7 @@ class JiraKeyValidator:
                 "Invalid JIRA key format",
                 key=jira_key,
                 expected_format="PROJECT-123",
-                extra={"security_event": True}
+                extra={"security_event": True},
             )
             raise JiraKeyValidationError(
                 "Invalid JIRA key format. Expected format: PROJECT-123 "
@@ -191,35 +203,31 @@ class JiraKeyValidator:
 
         # Step 5: Additional project key validation (redundant but explicit check)
         # This is technically covered by the regex, but provides clearer error messaging
-        project_key = jira_key.split('-')[0]  # Extract project part before hyphen
+        project_key = jira_key.split("-")[0]  # Extract project part before hyphen
         if len(project_key) < 2:
             raise JiraKeyValidationError("Project key must be at least 2 characters")
 
         # Log successful validation for audit trail
-        logger.debug(
-            "JIRA key validation successful",
-            key=jira_key,
-            project=project_key
-        )
+        logger.debug("JIRA key validation successful", key=jira_key, project=project_key)
 
         return jira_key  # Return unchanged validated key
 
     def is_valid_jira_key_format(self, jira_key: str) -> bool:
         """Check if a JIRA key has valid format without raising exceptions.
-        
+
         Convenience method that performs full validation but returns a boolean
         instead of raising exceptions. Useful for conditional logic where
         exception handling would be cumbersome.
-        
+
         Args:
             jira_key: The JIRA key to check (same format as validate_jira_key)
 
         Returns:
             True if format is valid and passes all security checks,
             False if any validation step fails
-            
+
         Complexity: O(n) - Same as validate_jira_key but with exception handling
-        
+
         Usage:
             if validator.is_valid_jira_key_format("PROJECT-123"):
                 # Process valid key
@@ -241,15 +249,15 @@ _jira_validator: Optional[JiraKeyValidator] = None
 
 def get_jira_validator() -> JiraKeyValidator:
     """Get the global JIRA key validator instance (singleton pattern).
-    
+
     Returns the global JiraKeyValidator instance, creating it if necessary.
     This ensures consistent validation rules across the entire application.
-    
+
     Returns:
         JiraKeyValidator: The global validator instance
-        
+
     Complexity: O(1) - Simple instance check and creation
-    
+
     Thread Safety:
         Instance creation is not thread-safe, but since this is typically
         called during application startup, it's generally safe in practice.
@@ -262,11 +270,11 @@ def get_jira_validator() -> JiraKeyValidator:
 
 def validate_jira_key(jira_key: str) -> str:
     """Validate a JIRA key using the global validator instance.
-    
+
     Convenience function that uses the global validator to validate JIRA keys.
     This is the primary entry point for JIRA key validation throughout the
     application.
-    
+
     Args:
         jira_key: The JIRA key to validate (e.g., "PROJECT-123")
 
@@ -275,9 +283,9 @@ def validate_jira_key(jira_key: str) -> str:
 
     Raises:
         JiraKeyValidationError: If validation fails for any security reason
-        
+
     Complexity: O(n) - Same as JiraKeyValidator.validate_jira_key()
-    
+
     Usage:
         try:
             valid_key = validate_jira_key(user_input)

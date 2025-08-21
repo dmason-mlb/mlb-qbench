@@ -46,7 +46,7 @@ class FilterValue(BaseModel):
     operator: FilterOperator = Field(FilterOperator.EQUALS, description="Filter operator")
     value: Union[str, int, list[str], list[int]] = Field(..., description="Filter value")
 
-    @field_validator('value')
+    @field_validator("value")
     @classmethod
     def validate_filter_value(cls, v: Any) -> Any:
         """Validate filter values for security."""
@@ -98,8 +98,8 @@ class FilterValue(BaseModel):
         else:
             raise ValueError(f"Invalid filter value type: {type(v)}")
 
-    @model_validator(mode='after')
-    def validate_field_value_compatibility(self) -> 'FilterValue':
+    @model_validator(mode="after")
+    def validate_field_value_compatibility(self) -> "FilterValue":
         """Validate that field and value types are compatible."""
         field = self.field
         value = self.value
@@ -111,13 +111,10 @@ class FilterValue(BaseModel):
             FilterableField.PRIORITY,
             FilterableField.FOLDER_STRUCTURE,
             FilterableField.JIRA_KEY,
-            FilterableField.STATUS
+            FilterableField.STATUS,
         }
 
-        list_fields = {
-            FilterableField.PLATFORMS,
-            FilterableField.TAGS
-        }
+        list_fields = {FilterableField.PLATFORMS, FilterableField.TAGS}
 
         # Validate field-value compatibility
         if field in string_fields:
@@ -139,7 +136,7 @@ class FilterValue(BaseModel):
 
         # Additional JIRA key validation
         if field == FilterableField.JIRA_KEY and isinstance(value, str):
-            jira_pattern = r'^[A-Z][A-Z0-9]*-\d+$'
+            jira_pattern = r"^[A-Z][A-Z0-9]*-\d+$"
             if not re.match(jira_pattern, value):
                 raise ValueError(f"Invalid JIRA key format: {value}")
 
@@ -149,9 +146,11 @@ class FilterValue(BaseModel):
 class ValidatedFilters(BaseModel):
     """Container for validated filters."""
 
-    filters: list[FilterValue] = Field(default_factory=list, description="List of validated filters")
+    filters: list[FilterValue] = Field(
+        default_factory=list, description="List of validated filters"
+    )
 
-    @field_validator('filters')
+    @field_validator("filters")
     @classmethod
     def validate_filter_count(cls, v: list[FilterValue]) -> list[FilterValue]:
         """Validate filter count for DoS protection."""
@@ -228,11 +227,9 @@ def validate_and_sanitize_filters(filters: Optional[dict[str, Any]]) -> Optional
                     operator = FilterOperator.EQUALS
 
             # Create validated filter
-            filter_values.append(FilterValue(
-                field=filterable_field,
-                operator=operator,
-                value=field_value
-            ))
+            filter_values.append(
+                FilterValue(field=filterable_field, operator=operator, value=field_value)
+            )
 
         # Validate the complete filter set
         validated = ValidatedFilters(filters=filter_values)
@@ -249,17 +246,20 @@ VALID_PRIORITIES = {"Critical", "High", "Medium", "Low"}
 VALID_TEST_TYPES = {"Functional", "API", "Integration", "Unit", "Performance"}
 VALID_PLATFORMS = {"web", "mobile", "api", "desktop", "ios", "android"}
 
+
 def validate_priority_value(priority: str) -> str:
     """Validate priority value against allowed values."""
     if priority not in VALID_PRIORITIES:
         raise ValueError(f"Invalid priority: {priority}. Must be one of {VALID_PRIORITIES}")
     return priority
 
+
 def validate_test_type_value(test_type: str) -> str:
     """Validate test type value against allowed values."""
     if test_type not in VALID_TEST_TYPES:
         raise ValueError(f"Invalid test type: {test_type}. Must be one of {VALID_TEST_TYPES}")
     return test_type
+
 
 def validate_platform_values(platforms: list[str]) -> list[str]:
     """Validate platform values against allowed values."""

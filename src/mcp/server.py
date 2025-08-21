@@ -81,11 +81,11 @@ server = Server("mlb-qbench")
 @server.list_tools()
 async def handle_list_tools() -> list[types.Tool]:
     """Register and return the complete list of available MCP tools.
-    
+
     This function defines the tool registry for the MCP server, providing
     JSON schema definitions for each tool's input parameters and capabilities.
     The schemas enable automatic validation and type checking by MCP clients.
-    
+
     Returns:
         List of Tool objects with complete schema definitions for:
         - search_tests: Semantic search with advanced filtering
@@ -93,16 +93,16 @@ async def handle_list_tools() -> list[types.Tool]:
         - find_similar_tests: Similarity analysis with scope control
         - ingest_tests: Batch data ingestion capabilities
         - check_health: Service monitoring and status reporting
-        
+
     Tool Schema Features:
         - Type validation for all parameters
         - Enum constraints for priority and scope values
         - Array specifications for tags, platforms, and folder structures
         - Default values for optional parameters (top_k=20, scope="all")
         - Required parameter enforcement
-        
+
     Complexity: O(1) - Static tool definitions with constant registration time
-    
+
     MCP Protocol:
         This function is called once during server initialization to register
         available tools with the client. The returned schemas are used for
@@ -240,18 +240,18 @@ async def handle_call_tool(
     name: str, arguments: Optional[dict[str, Any]] = None
 ) -> Sequence[types.TextContent | types.ImageContent | types.EmbeddedResource]:
     """Execute MCP tool requests with comprehensive error handling and response formatting.
-    
+
     This is the main orchestration function for all tool execution. It handles HTTP
     communication with the QBench API service, processes responses, and formats
     results for optimal AI assistant consumption.
-    
+
     Args:
         name: Tool name to execute (search_tests, get_test_by_jira, etc.)
         arguments: Tool-specific parameters validated against registered schemas
-        
+
     Returns:
         Sequence of MCP content objects (primarily TextContent with markdown formatting)
-        
+
     Request Processing Pipeline:
         1. Authentication Setup: Configure API key headers if available
         2. HTTP Client Creation: Async client with 30-second timeout
@@ -259,29 +259,29 @@ async def handle_call_tool(
         4. Response Validation: HTTP status checking and JSON parsing
         5. Format Conversion: Transform API data to human-readable markdown
         6. Error Handling: Comprehensive exception management with context
-        
+
     Tool Implementations:
         - search_tests: POST /search with query and filters
         - get_test_by_jira: GET /by-jira/{key} for direct lookup
         - find_similar_tests: GET /similar/{key} with similarity parameters
         - ingest_tests: POST /ingest for batch data processing
         - check_health: GET /healthz for service status monitoring
-        
+
     Response Formatting Strategy:
         - Markdown formatting for rich text display in AI assistants
         - Truncation for long content (steps, descriptions)
         - Score display with 3 decimal precision for relevance
         - Hierarchical structure with headers and bullet points
         - Pagination indicators for truncated results
-        
+
     Error Handling Categories:
         1. HTTP Status Errors: API endpoint failures with status codes
         2. JSON Parse Errors: Malformed response data handling
         3. Network Errors: Connection failures and timeouts
         4. Tool Errors: Unknown tool names and invalid parameters
-        
+
     Complexity: O(1 + r) where r=number of results to format
-    
+
     Performance Considerations:
         - HTTP connection pooling via httpx.AsyncClient context manager
         - 30-second timeout prevents hanging requests
@@ -304,7 +304,7 @@ async def handle_call_tool(
                 response = await client.post(
                     f"{API_BASE_URL}/search",
                     json={
-                        "query": arguments["query"],           # User search query for semantic matching
+                        "query": arguments["query"],  # User search query for semantic matching
                         "top_k": arguments.get("top_k", 20),  # Result count limit (default: 20)
                         "filters": arguments.get("filters", {}),  # Optional metadata filters
                     },
@@ -315,7 +315,9 @@ async def handle_call_tool(
                 # Response formatting: Convert API results to markdown for AI assistant consumption
                 # Returns user-friendly message if no results found
                 if not results:
-                    return [types.TextContent(type="text", text="No tests found matching your query.")]
+                    return [
+                        types.TextContent(type="text", text="No tests found matching your query.")
+                    ]
 
                 # Format each search result with hierarchical markdown structure
                 formatted_results = []
@@ -326,7 +328,9 @@ async def handle_call_tool(
                     text += f"- UID: {test['uid']}\n"  # Unique identifier for reference
                     text += f"- Priority: {test['priority']}\n"  # Business priority level
                     text += f"- Tags: {', '.join(test.get('tags', []))}\n"  # Metadata tags
-                    text += f"- Score: {result['score']:.3f}\n"  # Relevance score (3 decimal precision)
+                    text += (
+                        f"- Score: {result['score']:.3f}\n"  # Relevance score (3 decimal precision)
+                    )
 
                     # Include step-level matches if available (granular search results)
                     if result.get("matched_steps"):
@@ -372,7 +376,7 @@ async def handle_call_tool(
                         if step.get("expected"):
                             text += f"   Expected: {', '.join(step['expected'])}\n"
                     # Indicate truncation if more steps exist
-                    if len(test['steps']) > 3:
+                    if len(test["steps"]) > 3:
                         text += f"... and {len(test['steps']) - 3} more steps\n"
 
                 return [types.TextContent(type="text", text=text)]
@@ -383,8 +387,8 @@ async def handle_call_tool(
                 response = await client.get(
                     f"{API_BASE_URL}/similar/{arguments['jira_key']}",  # Reference test identifier
                     params={
-                        "top_k": arguments.get("top_k", 10),      # Result count limit
-                        "scope": arguments.get("scope", "all"),   # Search scope: docs/steps/all
+                        "top_k": arguments.get("top_k", 10),  # Result count limit
+                        "scope": arguments.get("scope", "all"),  # Search scope: docs/steps/all
                     },
                 )
                 response.raise_for_status()
@@ -411,7 +415,9 @@ async def handle_call_tool(
                 # Supports both functional and API test data files with flexible payload
                 payload = {}  # Build payload dynamically based on provided arguments
                 if arguments.get("functional_path"):
-                    payload["functional_path"] = arguments["functional_path"]  # Functional test JSON file
+                    payload["functional_path"] = arguments[
+                        "functional_path"
+                    ]  # Functional test JSON file
                 if arguments.get("api_path"):
                     payload["api_path"] = arguments["api_path"]  # API test JSON file
 
@@ -457,7 +463,9 @@ async def handle_call_tool(
                 # Embedding provider configuration for troubleshooting
                 if "embedder" in health:
                     text += "\n**Embedder:**\n"
-                    text += f"- Provider: {health['embedder']['provider']}\n"  # OpenAI, Cohere, etc.
+                    text += (
+                        f"- Provider: {health['embedder']['provider']}\n"  # OpenAI, Cohere, etc.
+                    )
                     text += f"- Model: {health['embedder']['model']}\n"  # Specific model name
 
                 return [types.TextContent(type="text", text=text)]
@@ -489,31 +497,31 @@ async def handle_call_tool(
 
 async def main():
     """Initialize and run the MCP server with stdio transport.
-    
+
     This function sets up the MCP server infrastructure and runs the main
     event loop for handling client connections via stdio transport. The server
     operates in a request-response mode, processing tool calls and returning
     formatted results.
-    
+
     Server Configuration:
         - Name: "mlb-qbench" for client identification
         - Version: "0.1.0" for compatibility tracking
         - Transport: stdio for desktop application integration
         - Capabilities: Standard MCP tool execution and notification support
-        
+
     Initialization Process:
         1. Create InitializationOptions with server metadata
         2. Configure server capabilities and experimental features
         3. Establish stdio communication streams
         4. Run main server event loop with exception handling
-        
+
     Complexity: O(∞) - Long-running server process
-    
+
     Exception Handling:
         - raise_exceptions=False prevents server crashes on tool errors
         - Errors are logged and returned as error responses to clients
         - Server continues running after individual tool failures
-        
+
     Transport Protocol:
         Uses stdio (stdin/stdout) for communication with MCP clients
         like Claude Desktop, enabling seamless AI assistant integration.
@@ -521,11 +529,11 @@ async def main():
     # Server configuration: Set up MCP server metadata and capabilities
     # Provides client identification and feature compatibility information
     init_options = InitializationOptions(
-        server_name="mlb-qbench",      # Unique server identifier for client recognition
-        server_version="0.1.0",        # Version for compatibility and debugging
+        server_name="mlb-qbench",  # Unique server identifier for client recognition
+        server_version="0.1.0",  # Version for compatibility and debugging
         capabilities=server.get_capabilities(
             notification_options=NotificationOptions(),  # Standard notification support
-            experimental_capabilities={},                # No experimental features enabled
+            experimental_capabilities={},  # No experimental features enabled
         ),
     )
 
@@ -533,9 +541,9 @@ async def main():
     # Uses async context manager for proper resource cleanup
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
         await server.run(
-            read_stream,          # stdin for receiving client requests
-            write_stream,         # stdout for sending responses
-            init_options,         # Server configuration and capabilities
+            read_stream,  # stdin for receiving client requests
+            write_stream,  # stdout for sending responses
+            init_options,  # Server configuration and capabilities
             raise_exceptions=False,  # Graceful error handling (don't crash server)
         )
 
